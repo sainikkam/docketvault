@@ -8,6 +8,7 @@ from sqlmodel import SQLModel
 
 from app.config import Settings
 from app.base_model import BaseID  # noqa: F401 — ensures models are registered
+from app.auth.models import User  # noqa: F401 — register User model for autogenerate
 
 settings = Settings()
 config = context.config

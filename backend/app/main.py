@@ -11,9 +11,9 @@ def create_app() -> FastAPI:
     async def health():
         return {"status": "ok"}
 
-    # Register routers as chunks are built:
-    # from app.auth.router import router as auth_router
-    # app.include_router(auth_router, prefix="/auth", tags=["auth"])
+    from app.auth.router import router as auth_router
+
+    app.include_router(auth_router, tags=["auth"])
 
     return app
 

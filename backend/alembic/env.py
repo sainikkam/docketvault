@@ -11,6 +11,7 @@ from app.base_model import BaseID  # noqa: F401 — ensures models are registere
 from app.auth.models import User  # noqa: F401
 from app.firms.models import Firm, MatterTemplate  # noqa: F401
 from app.matters.models import Matter, MatterMember, Invitation, AuditLog  # noqa: F401
+from app.evidence.models import Record, Artifact  # noqa: F401
 
 settings = Settings()
 config = context.config

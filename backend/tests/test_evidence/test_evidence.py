@@ -189,3 +189,148 @@ async def test_download_artifact(client):
     )
     assert resp.status_code == 200
     assert "url" in resp.json()
+
+
+# --- Chunk 5: Trust Pipeline tests ---
+
+
+@pytest.mark.asyncio
+async def test_upload_stores_hash(client):
+    _, cli_token, matter_id = await setup_matter_with_client(client)
+    content = b"unique file content for hash test"
+    upload = await client.post(
+        f"/matters/{matter_id}/evidence/upload",
+        headers={"Authorization": f"Bearer {cli_token}"},
+        files=[("files", ("hashed.pdf", content, "application/pdf"))],
+    )
+    assert upload.status_code == 201
+    artifact_id = upload.json()["artifacts"][0]
+    detail = await client.get(
+        f"/artifacts/{artifact_id}",
+        headers={"Authorization": f"Bearer {cli_token}"},
+    )
+    assert detail.json()["sha256"] is not None
+    assert len(detail.json()["sha256"]) == 64
+
+
+@pytest.mark.asyncio
+async def test_duplicate_detection(client):
+    _, cli_token, matter_id = await setup_matter_with_client(client)
+    content = b"duplicate file content"
+
+    # Upload first time
+    r1 = await client.post(
+        f"/matters/{matter_id}/evidence/upload",
+        headers={"Authorization": f"Bearer {cli_token}"},
+        files=[("files", ("file1.pdf", content, "application/pdf"))],
+    )
+    assert r1.status_code == 201
+    first_id = r1.json()["artifacts"][0]
+
+    # Upload same content again
+    r2 = await client.post(
+        f"/matters/{matter_id}/evidence/upload",
+        headers={"Authorization": f"Bearer {cli_token}"},
+        files=[("files", ("file2.pdf", content, "application/pdf"))],
+    )
+    assert r2.status_code == 201
+    second_id = r2.json()["artifacts"][0]
+
+    # Check the second artifact is flagged as duplicate
+    detail = await client.get(
+        f"/artifacts/{second_id}",
+        headers={"Authorization": f"Bearer {cli_token}"},
+    )
+    data = detail.json()
+    assert data["is_duplicate"] is True
+    assert data["duplicate_of"] == first_id
+
+    # First artifact should NOT be a duplicate
+    detail1 = await client.get(
+        f"/artifacts/{first_id}",
+        headers={"Authorization": f"Bearer {cli_token}"},
+    )
+    assert detail1.json()["is_duplicate"] is False
+
+
+@pytest.mark.asyncio
+async def test_manifest_returns_all_entries(client):
+    _, cli_token, matter_id = await setup_matter_with_client(client)
+
+    # Upload two files
+    await client.post(
+        f"/matters/{matter_id}/evidence/upload",
+        headers={"Authorization": f"Bearer {cli_token}"},
+        files=[("files", ("a.pdf", b"content a", "application/pdf"))],
+    )
+    await client.post(
+        f"/matters/{matter_id}/evidence/upload",
+        headers={"Authorization": f"Bearer {cli_token}"},
+        files=[("files", ("b.pdf", b"content b", "application/pdf"))],
+    )
+
+    resp = await client.get(
+        f"/matters/{matter_id}/manifest",
+        headers={"Authorization": f"Bearer {cli_token}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["matter_id"] == matter_id
+    assert data["total_artifacts"] == 2
+    assert data["total_duplicates"] == 0
+    assert len(data["entries"]) == 2
+    for entry in data["entries"]:
+        assert entry["sha256"] != ""
+        assert entry["artifact_id"] is not None
+        assert entry["uploaded_by"] is not None
+
+
+@pytest.mark.asyncio
+async def test_manifest_with_duplicates(client):
+    _, cli_token, matter_id = await setup_matter_with_client(client)
+    content = b"manifest duplicate content"
+
+    await client.post(
+        f"/matters/{matter_id}/evidence/upload",
+        headers={"Authorization": f"Bearer {cli_token}"},
+        files=[("files", ("orig.pdf", content, "application/pdf"))],
+    )
+    await client.post(
+        f"/matters/{matter_id}/evidence/upload",
+        headers={"Authorization": f"Bearer {cli_token}"},
+        files=[("files", ("copy.pdf", content, "application/pdf"))],
+    )
+
+    resp = await client.get(
+        f"/matters/{matter_id}/manifest",
+        headers={"Authorization": f"Bearer {cli_token}"},
+    )
+    data = resp.json()
+    assert data["total_artifacts"] == 2
+    assert data["total_duplicates"] == 1
+
+
+@pytest.mark.asyncio
+async def test_duplicate_audit_log(client):
+    _, cli_token, matter_id = await setup_matter_with_client(client)
+    content = b"audit log dup content"
+
+    await client.post(
+        f"/matters/{matter_id}/evidence/upload",
+        headers={"Authorization": f"Bearer {cli_token}"},
+        files=[("files", ("first.pdf", content, "application/pdf"))],
+    )
+    await client.post(
+        f"/matters/{matter_id}/evidence/upload",
+        headers={"Authorization": f"Bearer {cli_token}"},
+        files=[("files", ("second.pdf", content, "application/pdf"))],
+    )
+
+    # Check audit log has duplicate_detected entry
+    resp = await client.get(
+        f"/matters/{matter_id}/audit-log",
+        headers={"Authorization": f"Bearer {cli_token}"},
+    )
+    assert resp.status_code == 200
+    actions = [e["action"] for e in resp.json()]
+    assert "duplicate_detected" in actions

@@ -35,6 +35,8 @@ class Artifact(BaseID, table=True):
     original_timestamps: dict = Field(default={}, sa_column=Column(JSON))
     import_timestamp: datetime = Field(default_factory=datetime.utcnow)
     status: str = Field(default="uploading", max_length=50)
+    is_duplicate: bool = Field(default=False)
+    duplicate_of: Optional[UUID] = Field(default=None, foreign_key="artifacts.id")
 
 
 # --- Request/response schemas ---
@@ -52,6 +54,8 @@ class ArtifactResponse(SQLModel):
     source_system: str
     status: str
     import_timestamp: datetime
+    is_duplicate: bool = False
+    duplicate_of: Optional[UUID] = None
 
 
 class RecordResponse(SQLModel):
@@ -68,3 +72,26 @@ class RecordResponse(SQLModel):
 class UploadResponse(SQLModel):
     uploaded: int
     artifacts: list[UUID]
+
+
+class ManifestEntry(SQLModel):
+    artifact_id: UUID
+    sha256: str
+    original_filename: str
+    mime_type: str
+    size_bytes: int
+    source_system: str
+    source_id: Optional[str] = None
+    original_timestamps: dict = {}
+    uploaded_at: datetime
+    uploaded_by: UUID
+    is_duplicate: bool
+    duplicate_of: Optional[UUID] = None
+    status: str
+
+
+class MatterManifest(SQLModel):
+    matter_id: UUID
+    total_artifacts: int
+    total_duplicates: int
+    entries: list[ManifestEntry]

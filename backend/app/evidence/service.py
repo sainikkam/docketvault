@@ -9,6 +9,33 @@ from app.evidence.models import Artifact, Record
 from app.storage import StorageBackend
 
 
+async def enforce_hash_and_check_dedup(
+    db: AsyncSession,
+    artifact: Artifact,
+    file_bytes: bytes,
+    matter_id: UUID,
+) -> dict:
+    """Compute SHA-256 if missing, check for duplicates within the matter."""
+    if not artifact.sha256:
+        artifact.sha256 = hashlib.sha256(file_bytes).hexdigest()
+
+    result = await db.execute(
+        select(Artifact).where(
+            Artifact.matter_id == matter_id,
+            Artifact.sha256 == artifact.sha256,
+            Artifact.id != artifact.id,
+        )
+    )
+    existing = result.scalars().first()
+
+    if existing:
+        artifact.is_duplicate = True
+        artifact.duplicate_of = existing.id
+        return {"is_duplicate": True, "duplicate_of": existing.id}
+
+    return {"is_duplicate": False, "duplicate_of": None}
+
+
 class IngestionService:
     """Handles file uploads — both direct files and ZIPs."""
 

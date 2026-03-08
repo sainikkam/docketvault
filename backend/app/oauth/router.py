@@ -10,6 +10,7 @@ from app.auth.service import get_current_user
 from app.config import Settings
 from app.database import get_db
 from app.evidence.models import Artifact
+from app.evidence.service import enforce_hash_and_check_dedup
 from app.matters.service import log_action, require_matter_role
 from app.oauth.models import ConnectedAccount, DriveImportRequest
 from app.oauth.service import GoogleOAuthService
@@ -140,6 +141,22 @@ async def import_from_drive(
             status="processing",
         )
         db.add(artifact)
+
+        dedup = await enforce_hash_and_check_dedup(db, artifact, file_bytes, matter_id)
+        if dedup["is_duplicate"]:
+            await log_action(
+                db,
+                user.id,
+                "duplicate_detected",
+                target_type="artifact",
+                target_id=artifact.id,
+                matter_id=matter_id,
+                metadata={
+                    "artifact_id": str(artifact.id),
+                    "duplicate_of": str(dedup["duplicate_of"]),
+                },
+            )
+
         created.append(str(artifact.id))
 
     await db.commit()

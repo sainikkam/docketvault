@@ -7,9 +7,16 @@ from app.auth.models import User
 from app.auth.service import get_current_user
 from app.config import Settings
 from app.database import get_db
-from app.evidence.models import ArtifactResponse, RecordResponse, UploadResponse
+from app.evidence.models import (
+    ArtifactResponse,
+    ManifestEntry,
+    MatterManifest,
+    RecordResponse,
+    UploadResponse,
+)
 from app.evidence.service import (
     IngestionService,
+    enforce_hash_and_check_dedup,
     get_artifact,
     get_record,
     list_artifacts,
@@ -53,6 +60,23 @@ async def upload_evidence(
             member.user_id,
         )
         all_artifacts.extend(artifacts)
+
+    # Run dedup check on all artifacts
+    for artifact in all_artifacts:
+        dedup = await enforce_hash_and_check_dedup(db, artifact, b"", matter_id)
+        if dedup["is_duplicate"]:
+            await log_action(
+                db,
+                member.user_id,
+                "duplicate_detected",
+                target_type="artifact",
+                target_id=artifact.id,
+                matter_id=matter_id,
+                metadata={
+                    "artifact_id": str(artifact.id),
+                    "duplicate_of": str(dedup["duplicate_of"]),
+                },
+            )
 
     await db.commit()
 
@@ -139,3 +163,39 @@ async def get_record_endpoint(
     record = await get_record(record_id, db)
     await require_matter_member(record.matter_id, user, db)
     return record
+
+
+@router.get("/matters/{matter_id}/manifest", response_model=MatterManifest)
+async def get_manifest(
+    matter_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await require_matter_member(matter_id, user, db)
+    artifacts = await list_artifacts(matter_id, db, limit=10000, offset=0)
+
+    entries = [
+        ManifestEntry(
+            artifact_id=a.id,
+            sha256=a.sha256 or "",
+            original_filename=a.original_filename,
+            mime_type=a.mime_type,
+            size_bytes=a.file_size_bytes,
+            source_system=a.source_system,
+            source_id=getattr(a, "source_id", None),
+            original_timestamps=getattr(a, "original_timestamps", {}),
+            uploaded_at=a.created_at,
+            uploaded_by=a.owner_user_id,
+            is_duplicate=a.is_duplicate,
+            duplicate_of=a.duplicate_of,
+            status=a.status,
+        )
+        for a in artifacts
+    ]
+
+    return MatterManifest(
+        matter_id=matter_id,
+        total_artifacts=len(entries),
+        total_duplicates=sum(1 for e in entries if e.is_duplicate),
+        entries=entries,
+    )

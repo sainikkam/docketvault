@@ -18,6 +18,8 @@ class Record(BaseID, table=True):
     text: str = Field(default="", sa_column=Column(Text))
     metadata_: dict = Field(default={}, sa_column=Column("metadata", JSON))
     tags: list = Field(default=[], sa_column=Column(JSON))
+    category: str = Field(default="uncategorized", max_length=50)
+    relevance_score: float = Field(default=0.0)
     raw_pointer: Optional[str] = Field(default=None, max_length=500)
 
 

@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     # LLM
     ANTHROPIC_API_KEY: str = ""
     LLM_MODEL: str = "claude-sonnet-4-6"
+    OPENAI_API_KEY: str = ""  # for Whisper transcription only
 
     # Google OAuth (needed in Chunk 4)
     GOOGLE_CLIENT_ID: str = ""

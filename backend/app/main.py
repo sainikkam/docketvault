@@ -17,6 +17,10 @@ def create_app() -> FastAPI:
     from app.evidence.router import router as evidence_router
     from app.oauth.router import router as oauth_router
     from app.extraction.router import router as extraction_router
+    from app.enrichment.router import router as enrichment_router
+    from app.sharing.router import router as sharing_router
+    from app.exports.router import router as exports_router
+    from app.notifications.router import router as notifications_router
 
     app.include_router(auth_router, tags=["auth"])
     app.include_router(firms_router, tags=["firms"])
@@ -24,6 +28,10 @@ def create_app() -> FastAPI:
     app.include_router(evidence_router, tags=["evidence"])
     app.include_router(oauth_router, tags=["oauth"])
     app.include_router(extraction_router, tags=["extraction"])
+    app.include_router(enrichment_router, tags=["enrichment"])
+    app.include_router(sharing_router, tags=["sharing"])
+    app.include_router(exports_router, tags=["exports"])
+    app.include_router(notifications_router, tags=["notifications"])
 
     return app
 

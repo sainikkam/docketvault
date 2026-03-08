@@ -6,10 +6,13 @@ from sqlmodel import SQLModel
 
 from app.auth.models import User  # noqa: F401
 from app.firms.models import Firm, MatterTemplate  # noqa: F401
-from app.matters.models import Matter, MatterMember, Invitation, AuditLog  # noqa: F401
+from app.matters.models import Matter, MatterMember, Invitation, AuditLog, EvidenceRequest  # noqa: F401
 from app.evidence.models import Record, Artifact  # noqa: F401
 from app.oauth.models import ConnectedAccount  # noqa: F401
 from app.extraction.models import Extraction  # noqa: F401
+from app.enrichment.models import TimelineEvent, MissingItem, IntakeSummary  # noqa: F401
+from app.sharing.models import SharePolicy  # noqa: F401
+from app.notifications.models import Notification  # noqa: F401
 from app.database import get_db
 from app.main import app
 

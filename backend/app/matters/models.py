@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import JSON, UniqueConstraint
+from sqlalchemy import JSON, Text, UniqueConstraint
 from sqlmodel import Column, Field, SQLModel
 
 from app.base_model import BaseID
@@ -45,6 +45,18 @@ class AuditLog(BaseID, table=True):
     target_type: Optional[str] = Field(default=None, max_length=50)
     target_id: Optional[UUID] = Field(default=None)
     metadata_: dict = Field(default={}, sa_column=Column("metadata", JSON))
+
+
+class EvidenceRequest(BaseID, table=True):
+    """Lawyer → Client evidence request."""
+
+    __tablename__ = "requests"
+    matter_id: UUID = Field(foreign_key="matters.id", index=True)
+    created_by: UUID = Field(foreign_key="users.id")
+    title: str = Field(max_length=500)
+    description: str = Field(default="", sa_column=Column(Text))
+    priority: str = Field(default="medium", max_length=10)
+    status: str = Field(default="open", max_length=20)
 
 
 # --- Request/response schemas ---
@@ -93,4 +105,21 @@ class AuditLogResponse(SQLModel):
     action: str
     target_type: Optional[str]
     target_id: Optional[UUID]
+    created_at: datetime
+
+
+class CreateEvidenceRequestBody(SQLModel):
+    title: str
+    description: str = ""
+    priority: str = "medium"
+
+
+class EvidenceRequestResponse(SQLModel):
+    id: UUID
+    matter_id: UUID
+    created_by: UUID
+    title: str
+    description: str
+    priority: str
+    status: str
     created_at: datetime

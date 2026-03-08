@@ -20,15 +20,20 @@ router = APIRouter()
 settings = Settings()
 
 EXTRACTABLE_MIMES = {"image/jpeg", "image/png", "image/webp", "application/pdf"}
+AUDIO_MIMES = {"audio/mpeg", "audio/mp4", "audio/wav", "audio/webm", "audio/ogg"}
 
 
 def _dispatch_extraction_tasks(artifacts):
     try:
-        from app.extraction.tasks import extract_image_pdf
+        from app.extraction.tasks import extract_audio, extract_image_pdf
 
         for a in artifacts:
-            if a.mime_type in EXTRACTABLE_MIMES and a.status == "processing":
+            if a.status != "processing":
+                continue
+            if a.mime_type in EXTRACTABLE_MIMES:
                 extract_image_pdf.delay(str(a.id))
+            elif a.mime_type in AUDIO_MIMES:
+                extract_audio.delay(str(a.id))
     except Exception:
         pass
 

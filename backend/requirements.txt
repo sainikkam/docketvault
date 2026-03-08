@@ -12,6 +12,11 @@ passlib[bcrypt]>=1.7.4
 python-jose[cryptography]>=3.3.0
 python-multipart>=0.0.9
 
+# Google OAuth
+google-auth>=2.22.0
+google-auth-oauthlib>=1.0.0
+google-api-python-client>=2.90.0
+
 # LLM
 anthropic>=0.39.0
 

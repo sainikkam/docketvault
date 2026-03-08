@@ -28,6 +28,20 @@ from app.storage import get_storage
 router = APIRouter()
 settings = Settings()
 
+EXTRACTABLE_MIMES = {"image/jpeg", "image/png", "image/webp", "application/pdf"}
+
+
+def _dispatch_extraction_tasks(artifacts):
+    """Dispatch Celery extraction tasks for extractable artifacts. Best-effort."""
+    try:
+        from app.extraction.tasks import extract_image_pdf
+
+        for a in artifacts:
+            if a.mime_type in EXTRACTABLE_MIMES and a.status == "processing":
+                extract_image_pdf.delay(str(a.id))
+    except Exception:
+        pass  # Redis/Celery not running — extraction skipped
+
 
 def get_storage_dep():
     return get_storage(settings)
@@ -79,6 +93,9 @@ async def upload_evidence(
             )
 
     await db.commit()
+
+    # Dispatch extraction tasks for image/PDF artifacts
+    _dispatch_extraction_tasks(all_artifacts)
 
     for artifact in all_artifacts:
         await log_action(

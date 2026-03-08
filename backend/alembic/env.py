@@ -13,6 +13,7 @@ from app.firms.models import Firm, MatterTemplate  # noqa: F401
 from app.matters.models import Matter, MatterMember, Invitation, AuditLog  # noqa: F401
 from app.evidence.models import Record, Artifact  # noqa: F401
 from app.oauth.models import ConnectedAccount  # noqa: F401
+from app.extraction.models import Extraction  # noqa: F401
 
 settings = Settings()
 config = context.config

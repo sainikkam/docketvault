@@ -19,6 +19,20 @@ from app.storage import get_storage
 router = APIRouter()
 settings = Settings()
 
+EXTRACTABLE_MIMES = {"image/jpeg", "image/png", "image/webp", "application/pdf"}
+
+
+def _dispatch_extraction_tasks(artifacts):
+    try:
+        from app.extraction.tasks import extract_image_pdf
+
+        for a in artifacts:
+            if a.mime_type in EXTRACTABLE_MIMES and a.status == "processing":
+                extract_image_pdf.delay(str(a.id))
+    except Exception:
+        pass
+
+
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
 
@@ -157,9 +171,13 @@ async def import_from_drive(
                 },
             )
 
-        created.append(str(artifact.id))
+        created.append(artifact)
 
     await db.commit()
+
+    # Dispatch extraction tasks for extractable artifacts
+    _dispatch_extraction_tasks(created)
+
     await log_action(
         db,
         user.id,
@@ -167,7 +185,7 @@ async def import_from_drive(
         matter_id=matter_id,
         metadata={
             "file_ids": body.file_ids,
-            "artifacts_created": created,
+            "artifacts_created": [str(a.id) for a in created],
         },
     )
-    return {"imported": len(created), "artifact_ids": created}
+    return {"imported": len(created), "artifact_ids": [str(a.id) for a in created]}

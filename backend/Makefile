@@ -1,4 +1,4 @@
-.PHONY: dev migrate new-migration test lint format
+.PHONY: dev migrate new-migration test lint format worker
 
 dev:
 	uvicorn app.main:app --reload --port 8000
@@ -17,3 +17,6 @@ lint:
 
 format:
 	ruff format .
+
+worker:
+	PYTHONPATH=. celery -A app.worker worker --loglevel=info

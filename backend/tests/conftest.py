@@ -4,7 +4,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel
 
-from app.auth.models import User  # noqa: F401 — register model
+from app.auth.models import User  # noqa: F401
+from app.firms.models import Firm, MatterTemplate  # noqa: F401
+from app.matters.models import Matter, MatterMember, Invitation, AuditLog  # noqa: F401
 from app.database import get_db
 from app.main import app
 

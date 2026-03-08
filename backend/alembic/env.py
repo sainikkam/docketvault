@@ -8,7 +8,9 @@ from sqlmodel import SQLModel
 
 from app.config import Settings
 from app.base_model import BaseID  # noqa: F401 — ensures models are registered
-from app.auth.models import User  # noqa: F401 — register User model for autogenerate
+from app.auth.models import User  # noqa: F401
+from app.firms.models import Firm, MatterTemplate  # noqa: F401
+from app.matters.models import Matter, MatterMember, Invitation, AuditLog  # noqa: F401
 
 settings = Settings()
 config = context.config

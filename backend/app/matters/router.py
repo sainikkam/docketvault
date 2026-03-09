@@ -1,12 +1,17 @@
+import base64
+import io
+import json
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import anthropic
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import SQLModel, select
 
 from app.auth.models import User
 from app.auth.service import get_current_user
+from app.config import Settings
 from app.database import get_db
 from app.notifications.service import get_matter_attorneys, get_matter_clients, notify
 from app.matters.models import (
@@ -197,6 +202,7 @@ async def get_dashboard(
 
     return {
         "matter_id": str(matter_id),
+        "firm_id": str(matter.firm_id),
         "matter_title": matter.title,
         "status": matter.status,
         "timeline_events": timeline_events,
@@ -283,6 +289,14 @@ async def create_request(
         title=body.title,
         description=body.description,
         priority=body.priority,
+        category=body.category,
+        date_range_start=body.date_range_start,
+        date_range_end=body.date_range_end,
+        keywords=body.keywords,
+        source_system=body.source_system,
+        format_instructions=body.format_instructions,
+        preservation_note=body.preservation_note,
+        checklist=body.checklist,
     )
     db.add(req)
     await db.commit()
@@ -324,6 +338,279 @@ async def list_requests(
         select(EvidenceRequest).where(EvidenceRequest.matter_id == matter_id)
     )
     return list(result.scalars().all())
+
+
+GENERATE_CHECKLIST_SYSTEM = (
+    "You are a legal assistant helping a lawyer specify what evidence they need "
+    "from a client. Generate a checklist of specific documents, records, or "
+    "materials the lawyer is requesting. Each item describes a piece of evidence, "
+    "NOT how to export it or what format to use — those details are handled "
+    "separately. Write in plain language a non-lawyer can understand."
+)
+
+GENERATE_CHECKLIST_USER = """Generate an evidence checklist for this document request.
+
+Each checklist item should describe a SPECIFIC document, record, or piece of
+evidence the lawyer needs. Focus on WHAT the lawyer is looking for, not HOW
+to export or deliver it.
+
+DO NOT include items about:
+- Export formats or technical steps (handled by "Format instructions" field)
+- Preservation warnings (handled by "Preservation notice" field)
+- Where to find data (handled by "Source system" field)
+- How to upload or deliver files
+
+DO include items like:
+- Specific emails, messages, or conversations to locate
+- Specific documents, receipts, or records to gather
+- Specific date ranges or people involved
+- Specific types of evidence relevant to the case
+
+Request details:
+Title: {title}
+Category: {category}
+Date range: {date_range_start} to {date_range_end}
+Keywords: {keywords}
+Source system: {source_system}
+Description: {description}
+
+Return a JSON array of strings. Each string is one checklist item.
+Keep items short and specific. Include 4-8 items.
+
+Example: ["All emails between you and John Smith from Jan-Mar 2025 regarding the lease agreement", "Any text messages mentioning the security deposit or move-out date", "Photos of the apartment taken at move-in and move-out", "The signed lease agreement and any amendments"]
+"""
+
+
+class GenerateChecklistBody(SQLModel):
+    """Input fields for AI checklist generation."""
+
+    title: str = ""
+    category: str = ""
+    date_range_start: Optional[str] = None
+    date_range_end: Optional[str] = None
+    keywords: list = []
+    source_system: str = ""
+    description: str = ""
+    format_instructions: str = ""
+    preservation_note: str = ""
+
+
+@router.post("/requests/generate-checklist")
+async def generate_checklist(
+    body: GenerateChecklistBody,
+    user: User = Depends(get_current_user),
+):
+    """AI generates an actionable checklist from structured request fields.
+
+    The lawyer reviews and edits the checklist before attaching it to the
+    evidence request and sending to the client.
+    """
+    if user.role not in ("attorney", "paralegal"):
+        raise HTTPException(403, "Only attorneys can generate checklists")
+
+    settings = Settings()
+    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+
+    # Only pass content-related fields to the AI. Format instructions,
+    # preservation notes, and source system have their own form fields
+    # and should NOT appear as checklist items.
+    prompt = GENERATE_CHECKLIST_USER.format(
+        title=body.title or "(not specified)",
+        category=body.category or "(not specified)",
+        date_range_start=body.date_range_start or "(open)",
+        date_range_end=body.date_range_end or "present",
+        keywords=", ".join(body.keywords) if body.keywords else "(none)",
+        source_system=body.source_system or "(not specified)",
+        description=body.description or "(none)",
+    )
+
+    response = client.messages.create(
+        model=settings.LLM_MODEL,
+        system=GENERATE_CHECKLIST_SYSTEM,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=1024,
+    )
+
+    raw_text = response.content[0].text
+    if raw_text.startswith("```"):
+        raw_text = raw_text.split("\n", 1)[1].rsplit("```", 1)[0]
+    items = json.loads(raw_text)
+
+    # Ensure it's a list of strings
+    if not isinstance(items, list):
+        items = []
+
+    # Return as checklist objects with completed=False
+    checklist = [{"item": str(item), "completed": False} for item in items]
+    return {"checklist": checklist}
+
+
+@router.patch("/requests/{request_id}/checklist")
+async def update_checklist_item(
+    request_id: UUID,
+    item_index: int = Query(..., ge=0),
+    completed: bool = Query(...),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Client toggles a checklist item's completed status."""
+    result = await db.execute(
+        select(EvidenceRequest).where(EvidenceRequest.id == request_id)
+    )
+    req = result.scalars().first()
+    if not req:
+        raise HTTPException(404, "Request not found")
+    await require_matter_member(req.matter_id, user, db)
+
+    checklist = list(req.checklist) if req.checklist else []
+    if item_index >= len(checklist):
+        raise HTTPException(400, "Checklist item index out of range")
+
+    checklist[item_index]["completed"] = completed
+    req.checklist = checklist
+    db.add(req)
+    await db.commit()
+
+    return {"checklist": checklist}
+
+
+PARSE_LETTER_SYSTEM = (
+    "You are a legal document parser. You are given a formal letter or memorandum "
+    "from a lawyer to a client requesting production of documents or ESI. "
+    "Extract the structured fields from this letter. Be precise and thorough. "
+    "Only extract what is explicitly stated in the letter. Respond with strict JSON."
+)
+
+PARSE_LETTER_USER = """Parse this formal document request letter and extract:
+
+- title: a short descriptive title for this request (e.g. "Email Production Request")
+- description: the main body of instructions for the client
+- category: one of [email, browser_history, social_media, chat_logs, files, photos, financial, medical, other]
+- date_range_start: ISO date string (YYYY-MM-DD) or null if not specified
+- date_range_end: ISO date string (YYYY-MM-DD) or null if not specified
+- keywords: list of search terms or key phrases mentioned
+- source_system: where the client should look (e.g. "Gmail", "WhatsApp", "Company laptop") or null
+- format_instructions: any instructions about file format, metadata preservation, etc. or null
+- preservation_note: any preservation / legal hold language (do not delete, etc.) or null
+- priority: "low", "medium", or "high" based on urgency language in the letter
+
+Return a single JSON object with these fields. Use null for fields not found in the letter.
+"""
+
+# Supported MIME types for letter upload
+LETTER_MIME_MAP = {
+    "application/pdf": "application/pdf",
+    "image/png": "image/png",
+    "image/jpeg": "image/jpeg",
+    "image/jpg": "image/jpeg",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "text/plain": "text",
+}
+
+
+def _extract_docx_text(file_bytes: bytes) -> str:
+    """Extract plain text from a DOCX file."""
+    import docx
+
+    doc = docx.Document(io.BytesIO(file_bytes))
+    return "\n".join(paragraph.text for paragraph in doc.paragraphs if paragraph.text)
+
+
+@router.post("/requests/parse-letter")
+async def parse_letter(
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+):
+    """Parse a formal document request letter into structured RFP fields.
+
+    Accepts PDF, images (PNG/JPG), DOCX, or plain text files. Uses the LLM
+    to extract category, date ranges, keywords, format instructions, etc.
+    """
+    if user.role not in ("attorney", "paralegal"):
+        raise HTTPException(403, "Only attorneys can parse request letters")
+
+    content_type = file.content_type or ""
+    if content_type not in LETTER_MIME_MAP:
+        raise HTTPException(
+            400,
+            f"Unsupported file type: {content_type}. "
+            "Upload a PDF, image (PNG/JPG), DOCX, or TXT file.",
+        )
+
+    file_bytes = await file.read()
+    if len(file_bytes) > 10 * 1024 * 1024:
+        raise HTTPException(400, "File too large. Maximum 10 MB.")
+
+    settings = Settings()
+    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+
+    mapped_type = LETTER_MIME_MAP[content_type]
+
+    # Build the message content based on file type
+    if mapped_type == "docx":
+        # Extract text from DOCX, then send as text prompt
+        text_content = _extract_docx_text(file_bytes)
+        if not text_content.strip():
+            raise HTTPException(400, "Could not extract text from DOCX file.")
+        messages = [
+            {
+                "role": "user",
+                "content": (
+                    PARSE_LETTER_USER
+                    + f"\n\n--- LETTER TEXT ---\n{text_content}\n--- END ---"
+                ),
+            }
+        ]
+    elif mapped_type == "text":
+        # Plain text — send directly
+        text_content = file_bytes.decode("utf-8", errors="replace")
+        messages = [
+            {
+                "role": "user",
+                "content": (
+                    PARSE_LETTER_USER
+                    + f"\n\n--- LETTER TEXT ---\n{text_content}\n--- END ---"
+                ),
+            }
+        ]
+    else:
+        # PDF or image — send via vision as base64
+        b64_data = base64.b64encode(file_bytes).decode()
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": mapped_type,
+                            "data": b64_data,
+                        },
+                    },
+                    {"type": "text", "text": PARSE_LETTER_USER},
+                ],
+            }
+        ]
+
+    response = client.messages.create(
+        model=settings.LLM_MODEL,
+        system=PARSE_LETTER_SYSTEM,
+        messages=messages,
+        max_tokens=2048,
+    )
+
+    # Parse JSON from response
+    raw_text = response.content[0].text
+    if raw_text.startswith("```"):
+        raw_text = raw_text.split("\n", 1)[1].rsplit("```", 1)[0]
+    parsed = json.loads(raw_text)
+
+    # Ensure keywords is always a list
+    if not isinstance(parsed.get("keywords"), list):
+        parsed["keywords"] = []
+
+    return parsed
 
 
 @router.patch("/requests/{request_id}")

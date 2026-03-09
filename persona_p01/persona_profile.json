@@ -1,0 +1,59 @@
+{
+  "persona_id": "p01",
+  "name": "Jordan Lee",
+  "age": 32,
+  "location": "Austin, TX",
+  "job": "Senior Product Manager",
+  "employer": "Mid-size SaaS company (B2B analytics)",
+  "household": "Lives with long-term partner Alex, no kids yet",
+  "income_approx": "$115,000/year",
+  "goals": [
+    "Get promoted to Director of Product within 18 months",
+    "Improve sleep and reduce anxiety",
+    "Save $30k for house down payment",
+    "Run a half marathon",
+    "Be more present with partner Alex"
+  ],
+  "pain_points": [
+    "Overcommitted calendar \u2014 back-to-back meetings most days",
+    "Doomscrolling before bed",
+    "Email overload",
+    "Guilt about not spending enough quality time with Alex",
+    "Imposter syndrome since recent reorg"
+  ],
+  "personality": {
+    "communication_style": "direct but warm",
+    "privacy_sensitivity": "medium",
+    "ai_assistant_tone": "casual, like a smart friend",
+    "strengths": [
+      "organized",
+      "empathetic",
+      "fast learner"
+    ],
+    "growth_areas": [
+      "delegation",
+      "saying no",
+      "patience with ambiguity"
+    ]
+  },
+  "tech_usage": {
+    "ai_tools": [
+      "ChatGPT",
+      "Notion AI"
+    ],
+    "productivity": [
+      "Notion",
+      "Linear",
+      "Slack",
+      "Google Calendar",
+      "Gmail"
+    ],
+    "social": [
+      "Twitter/X",
+      "LinkedIn",
+      "Instagram"
+    ],
+    "wearables": "Fitbit Charge 5",
+    "frequency": "Uses AI 4-6x per week"
+  }
+}

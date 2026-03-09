@@ -1,54 +1,35 @@
+"""Join a Matter — accept an invitation token from your attorney.
+
+Login and registration are handled on the main landing page.
+This page is for clients who already have an account and need
+to join a matter using an invitation token.
+"""
+
 import streamlit as st
-import sys, os
+import sys
+import os
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from lib.api_client import api_post, api_get
+from lib.theme import setup_page, page_header
+from lib.session import require_login
+from lib.api_client import api_post
 
-st.title("Login / Register")
+setup_page()
+require_login()
 
-tab_login, tab_register = st.tabs(["Login", "Register"])
+page_header("Join a Matter", "Use an invitation token to join a case")
 
-with tab_login:
-    email = st.text_input("Email", key="login_email")
-    password = st.text_input("Password", type="password", key="login_password")
-    if st.button("Login"):
+st.caption("Paste the invitation token your attorney shared with you.")
+
+invite_token = st.text_input("Invitation Token", key="invite_token")
+if st.button("Join Matter", type="primary"):
+    if not invite_token.strip():
+        st.warning("Please paste the invitation token.")
+    else:
         try:
-            data = api_post("/auth/login", json={"email": email, "password": password})
-            st.session_state.access_token = data["access_token"]
-            st.session_state.role = data["user"]["role"]
-            st.session_state.user_id = data["user"]["id"]
-            st.session_state.user_email = data["user"]["email"]
-            st.success("Logged in!")
-
-            # Auto-select first matter
-            try:
-                matters = api_get("/matters")
-                if matters:
-                    st.session_state.matter_id = matters[0]["id"]
-            except Exception:
-                pass
-
+            member = api_post(f"/invitations/{invite_token.strip()}/accept")
+            st.session_state.matter_id = member["matter_id"]
+            st.success("You've joined the matter!")
             st.rerun()
         except Exception as e:
-            st.error(f"Login failed: {e}")
-
-with tab_register:
-    reg_email = st.text_input("Email", key="reg_email")
-    reg_name = st.text_input("Display Name", key="reg_name")
-    reg_password = st.text_input("Password", type="password", key="reg_password")
-    reg_role = st.selectbox("Role", ["primary_client", "attorney", "paralegal"])
-    if st.button("Register"):
-        try:
-            data = api_post("/auth/register", json={
-                "email": reg_email,
-                "password": reg_password,
-                "role": reg_role,
-                "display_name": reg_name,
-            })
-            st.session_state.access_token = data["access_token"]
-            st.session_state.role = reg_role
-            st.session_state.user_id = data.get("user_id") or data.get("id")
-            st.session_state.user_email = reg_email
-            st.success("Registered and logged in!")
-            st.rerun()
-        except Exception as e:
-            st.error(f"Registration failed: {e}")
+            st.error(f"Failed to join matter: {e}")

@@ -17,5 +17,6 @@ class BaseAdapter:
         matter_id: UUID,
         owner_id: UUID,
         storage: StorageBackend,
+        **kwargs,
     ) -> tuple[list[Record], list[Artifact]]:
         raise NotImplementedError

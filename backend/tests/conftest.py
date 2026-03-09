@@ -16,7 +16,7 @@ from app.notifications.models import Notification  # noqa: F401
 from app.database import get_db
 from app.main import app
 
-TEST_DATABASE_URL = "postgresql+asyncpg://sainikkam@localhost:5432/docketvault_test"
+TEST_DATABASE_URL = "postgresql+asyncpg://phoenix.t@localhost:5432/docketvault_test"
 
 
 @pytest_asyncio.fixture(scope="session")

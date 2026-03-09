@@ -46,7 +46,10 @@ class GoogleOAuthService:
 
         flow = Flow.from_client_config(
             self._client_config(),
-            scopes=["https://www.googleapis.com/auth/drive.readonly"],
+            scopes=[
+                "https://www.googleapis.com/auth/drive.readonly",
+                "https://www.googleapis.com/auth/gmail.readonly",
+            ],
             redirect_uri=self.redirect_uri,
         )
         flow.fetch_token(code=code)

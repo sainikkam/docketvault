@@ -82,7 +82,7 @@ async def create_matter(
         )
     matter = Matter(
         firm_id=req.firm_id,
-        template_id=req.template_id,
+        template_id=req.template_id or None,
         title=req.title,
         created_by=user.id,
     )

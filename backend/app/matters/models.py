@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 from uuid import UUID
 
@@ -11,7 +11,7 @@ from app.base_model import BaseID
 class Matter(BaseID, table=True):
     __tablename__ = "matters"
     firm_id: UUID = Field(foreign_key="firms.id")
-    template_id: UUID = Field(foreign_key="matter_templates.id")
+    template_id: Optional[UUID] = Field(default=None, foreign_key="matter_templates.id")
     title: str = Field(max_length=255)
     status: str = Field(default="active", max_length=50)
     created_by: UUID = Field(foreign_key="users.id")
@@ -48,7 +48,12 @@ class AuditLog(BaseID, table=True):
 
 
 class EvidenceRequest(BaseID, table=True):
-    """Lawyer → Client evidence request."""
+    """Lawyer → Client structured document request (RFP).
+
+    Supports both free-text and structured fields so lawyers can issue
+    precise, legally-defensible requests with categories, date ranges,
+    keywords, format instructions, and preservation notes.
+    """
 
     __tablename__ = "requests"
     matter_id: UUID = Field(foreign_key="matters.id", index=True)
@@ -58,20 +63,42 @@ class EvidenceRequest(BaseID, table=True):
     priority: str = Field(default="medium", max_length=10)
     status: str = Field(default="open", max_length=20)
 
+    # -- Structured RFP fields --
+    # Category of data sought (email, browser_history, social_media, etc.)
+    category: Optional[str] = Field(default=None, max_length=50)
+    # Date range bounding the request (e.g. "all emails from Jan 1 to Mar 1")
+    date_range_start: Optional[date] = Field(default=None)
+    date_range_end: Optional[date] = Field(default=None)
+    # Search terms the client should use when finding data
+    keywords: list = Field(default=[], sa_column=Column(JSON))
+    # Where the client should look (Gmail, WhatsApp, Company laptop, etc.)
+    source_system: Optional[str] = Field(default=None, max_length=100)
+    # How to deliver the data (native format, PDF, etc.)
+    format_instructions: Optional[str] = Field(
+        default=None, sa_column=Column("format_instructions", Text)
+    )
+    # Legal hold / preservation language
+    preservation_note: Optional[str] = Field(
+        default=None, sa_column=Column("preservation_note", Text)
+    )
+    # AI-generated checklist, reviewed/edited by lawyer before sending.
+    # Each item: {"item": str, "completed": bool}
+    checklist: list = Field(default=[], sa_column=Column("checklist", JSON))
+
 
 # --- Request/response schemas ---
 
 
 class MatterCreateRequest(SQLModel):
     firm_id: UUID
-    template_id: UUID
+    template_id: Optional[UUID] = None
     title: str
 
 
 class MatterResponse(SQLModel):
     id: UUID
     firm_id: UUID
-    template_id: UUID
+    template_id: Optional[UUID] = None
     title: str
     status: str
     created_by: UUID
@@ -112,6 +139,16 @@ class CreateEvidenceRequestBody(SQLModel):
     title: str
     description: str = ""
     priority: str = "medium"
+    # Structured RFP fields (all optional for backwards compatibility)
+    category: Optional[str] = None
+    date_range_start: Optional[date] = None
+    date_range_end: Optional[date] = None
+    keywords: list = []
+    source_system: Optional[str] = None
+    format_instructions: Optional[str] = None
+    preservation_note: Optional[str] = None
+    # AI-generated checklist, reviewed by the lawyer before sending
+    checklist: list = []
 
 
 class EvidenceRequestResponse(SQLModel):
@@ -122,4 +159,12 @@ class EvidenceRequestResponse(SQLModel):
     description: str
     priority: str
     status: str
+    category: Optional[str] = None
+    date_range_start: Optional[date] = None
+    date_range_end: Optional[date] = None
+    keywords: list = []
+    source_system: Optional[str] = None
+    format_instructions: Optional[str] = None
+    preservation_note: Optional[str] = None
+    checklist: list = []
     created_at: datetime

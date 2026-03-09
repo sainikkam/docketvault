@@ -28,19 +28,11 @@ async def setup_matter_with_client(client):
     )
     firm_id = firm.json()["id"]
 
-    template = await client.post(
-        f"/firms/{firm_id}/templates",
-        headers={"Authorization": f"Bearer {att_token}"},
-        json={"name": "Template", "checklist": []},
-    )
-    template_id = template.json()["id"]
-
     matter = await client.post(
         "/matters",
         headers={"Authorization": f"Bearer {att_token}"},
         json={
             "firm_id": firm_id,
-            "template_id": template_id,
             "title": "Evidence Test",
         },
     )

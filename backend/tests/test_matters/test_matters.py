@@ -14,32 +14,26 @@ async def register_user(client, email, role="attorney"):
     return resp.json()["access_token"]
 
 
-async def setup_firm_and_template(client, token):
+async def setup_firm(client, token):
+    """Create a firm and return its ID. Template creation removed; template_id is optional on matters."""
     firm = await client.post(
         "/firms",
         headers={"Authorization": f"Bearer {token}"},
         json={"name": "Test Firm"},
     )
-    firm_id = firm.json()["id"]
-    template = await client.post(
-        f"/firms/{firm_id}/templates",
-        headers={"Authorization": f"Bearer {token}"},
-        json={"name": "Test Template", "checklist": []},
-    )
-    return firm_id, template.json()["id"]
+    return firm.json()["id"]
 
 
 @pytest.mark.asyncio
 async def test_attorney_creates_matter(client):
     token = await register_user(client, "att@m.com", "attorney")
-    firm_id, template_id = await setup_firm_and_template(client, token)
+    firm_id = await setup_firm(client, token)
 
     resp = await client.post(
         "/matters",
         headers={"Authorization": f"Bearer {token}"},
         json={
             "firm_id": firm_id,
-            "template_id": template_id,
             "title": "Smith v. Landlord",
         },
     )
@@ -51,7 +45,7 @@ async def test_attorney_creates_matter(client):
 @pytest.mark.asyncio
 async def test_client_cannot_create_matter(client):
     att_token = await register_user(client, "att2@m.com", "attorney")
-    firm_id, template_id = await setup_firm_and_template(client, att_token)
+    firm_id = await setup_firm(client, att_token)
 
     cli_token = await register_user(client, "cli@m.com", "primary_client")
     resp = await client.post(
@@ -59,7 +53,6 @@ async def test_client_cannot_create_matter(client):
         headers={"Authorization": f"Bearer {cli_token}"},
         json={
             "firm_id": firm_id,
-            "template_id": template_id,
             "title": "Should Fail",
         },
     )
@@ -69,14 +62,13 @@ async def test_client_cannot_create_matter(client):
 @pytest.mark.asyncio
 async def test_invite_accept_flow(client):
     att_token = await register_user(client, "att3@m.com", "attorney")
-    firm_id, template_id = await setup_firm_and_template(client, att_token)
+    firm_id = await setup_firm(client, att_token)
 
     matter = await client.post(
         "/matters",
         headers={"Authorization": f"Bearer {att_token}"},
         json={
             "firm_id": firm_id,
-            "template_id": template_id,
             "title": "Invite Test",
         },
     )
@@ -104,14 +96,13 @@ async def test_invite_accept_flow(client):
 @pytest.mark.asyncio
 async def test_invite_already_used(client):
     att_token = await register_user(client, "att4@m.com", "attorney")
-    firm_id, template_id = await setup_firm_and_template(client, att_token)
+    firm_id = await setup_firm(client, att_token)
 
     matter = await client.post(
         "/matters",
         headers={"Authorization": f"Bearer {att_token}"},
         json={
             "firm_id": firm_id,
-            "template_id": template_id,
             "title": "Reuse Test",
         },
     )
@@ -143,14 +134,13 @@ async def test_invite_already_used(client):
 @pytest.mark.asyncio
 async def test_audit_log(client):
     att_token = await register_user(client, "att5@m.com", "attorney")
-    firm_id, template_id = await setup_firm_and_template(client, att_token)
+    firm_id = await setup_firm(client, att_token)
 
     matter = await client.post(
         "/matters",
         headers={"Authorization": f"Bearer {att_token}"},
         json={
             "firm_id": firm_id,
-            "template_id": template_id,
             "title": "Audit Test",
         },
     )

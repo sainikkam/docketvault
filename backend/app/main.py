@@ -21,6 +21,7 @@ def create_app() -> FastAPI:
     from app.sharing.router import router as sharing_router
     from app.exports.router import router as exports_router
     from app.notifications.router import router as notifications_router
+    from app.gmail.router import router as gmail_router
 
     app.include_router(auth_router, tags=["auth"])
     app.include_router(firms_router, tags=["firms"])
@@ -32,6 +33,7 @@ def create_app() -> FastAPI:
     app.include_router(sharing_router, tags=["sharing"])
     app.include_router(exports_router, tags=["exports"])
     app.include_router(notifications_router, tags=["notifications"])
+    app.include_router(gmail_router, tags=["gmail"])
 
     return app
 

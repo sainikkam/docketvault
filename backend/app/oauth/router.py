@@ -38,7 +38,10 @@ def _dispatch_extraction_tasks(artifacts):
         pass
 
 
-SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
+SCOPES = [
+    "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/gmail.readonly",
+]
 
 
 async def _get_account(user_id: UUID, db: AsyncSession) -> ConnectedAccount:

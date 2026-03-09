@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.evidence.adapters.generic_zip import GenericZipAdapter
+from app.evidence.adapters.jsonl_adapter import JsonlAdapter
 from app.evidence.models import Artifact, Record
 from app.storage import StorageBackend
 
@@ -42,7 +43,8 @@ class IngestionService:
     def __init__(self, storage: StorageBackend, db: AsyncSession):
         self.storage = storage
         self.db = db
-        self.adapters = [GenericZipAdapter()]
+        # Order matters: more specific adapters first, generic ZIP last
+        self.adapters = [JsonlAdapter(), GenericZipAdapter()]
 
     async def ingest(
         self,
@@ -57,7 +59,8 @@ class IngestionService:
         for adapter in self.adapters:
             if adapter.can_handle(filename, mime_type):
                 records, artifacts = await adapter.parse(
-                    file_bytes, matter_id, owner_id, self.storage
+                    file_bytes, matter_id, owner_id, self.storage,
+                    filename=filename,
                 )
                 for r in records:
                     self.db.add(r)

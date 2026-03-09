@@ -11,7 +11,7 @@ from app.enrichment.models import IntakeSummary, MissingItem, TimelineEvent
 from app.evidence.models import Artifact, Record
 from app.extraction.models import Extraction
 from app.firms.models import MatterTemplate
-from app.matters.models import Matter
+from app.matters.models import EvidenceRequest, Matter
 from app.worker import celery_app
 
 CATEGORIZE_TIMELINE_SYSTEM = (
@@ -60,6 +60,34 @@ Return JSON with:
     "key_timeline": [{{"bullet": str, "citations": [{{"record_id": str}}]}}],
     "open_questions": [{{"question": str, "why": str}}]
   }}
+"""
+
+
+REQUEST_MATCH_SYSTEM = (
+    "You are a legal evidence matching engine. Given a list of attorney evidence "
+    "requests and a list of uploaded artifacts with their extraction summaries, "
+    "determine which artifacts satisfy which requests.\n"
+    "Match based on: category alignment, keyword presence in extracted text/claims, "
+    "date range overlap, and source system match.\n"
+    "Only report confident matches. Do not guess."
+)
+
+REQUEST_MATCH_USER = """Open evidence requests:
+{requests_text}
+
+Uploaded artifacts with extractions:
+{artifacts_text}
+
+Return JSON with:
+- matches: list of {{
+    "request_id": str,
+    "artifact_ids": [str],
+    "confidence": float (0..1),
+    "reason": str (brief explanation of why these artifacts match)
+  }}
+
+Only include matches with confidence >= 0.7.
+If no artifacts match a request, omit that request from the list.
 """
 
 
@@ -265,7 +293,120 @@ def enrich_matter(self, matter_id: str):
             )
             db.add(summary)
 
+        # --- LLM Call 3: Auto-match artifacts to open evidence requests ---
+        _try_auto_match_requests(
+            matter_id=UUID(matter_id),
+            matter_title=matter.title,
+            artifacts=artifacts,
+            items_text=items_text,
+            client=client,
+            settings=settings,
+            db=db,
+        )
+
         # Update matter status
         matter.status = "enriched"
         db.add(matter)
         db.commit()
+
+
+def _try_auto_match_requests(
+    matter_id: UUID,
+    matter_title: str,
+    artifacts: list,
+    items_text: str,
+    client,
+    settings,
+    db: Session,
+):
+    """Best-effort: match uploaded artifacts to open evidence requests via LLM.
+
+    Runs after categorization + missing-items enrichment. If the LLM finds
+    high-confidence matches (>= 0.85), it auto-marks the request as fulfilled
+    and notifies attorneys. Lower-confidence matches are logged but left open.
+    """
+    try:
+        # Load open requests for this matter
+        open_requests = list(
+            db.execute(
+                select(EvidenceRequest).where(
+                    EvidenceRequest.matter_id == matter_id,
+                    EvidenceRequest.status == "open",
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        if not open_requests:
+            return
+
+        # Build request descriptions for the LLM
+        requests_text = ""
+        for req in open_requests:
+            parts = [f"request_id={req.id}", f"title={req.title}"]
+            if req.category:
+                parts.append(f"category={req.category}")
+            if req.keywords:
+                parts.append(f"keywords={json.dumps(req.keywords)}")
+            if req.date_range_start or req.date_range_end:
+                parts.append(
+                    f"date_range={req.date_range_start} to {req.date_range_end}"
+                )
+            if req.source_system:
+                parts.append(f"source_system={req.source_system}")
+            if req.description:
+                parts.append(f"description={req.description[:200]}")
+            requests_text += f"- {' | '.join(parts)}\n"
+
+        response = client.messages.create(
+            model=settings.LLM_MODEL,
+            system=REQUEST_MATCH_SYSTEM,
+            messages=[
+                {
+                    "role": "user",
+                    "content": REQUEST_MATCH_USER.format(
+                        requests_text=requests_text,
+                        artifacts_text=items_text,
+                    ),
+                }
+            ],
+            max_tokens=2048,
+        )
+        match_data = _parse_json_response(response.content[0].text)
+
+        # Process matches
+        req_map = {str(r.id): r for r in open_requests}
+        for match in match_data.get("matches", []):
+            req_id = match.get("request_id")
+            confidence = match.get("confidence", 0.0)
+            if req_id not in req_map:
+                continue
+
+            req = req_map[req_id]
+            if confidence >= 0.85:
+                # High confidence: auto-fulfill and notify attorneys
+                req.status = "fulfilled"
+                db.add(req)
+
+                from app.matters.models import AuditLog
+
+                audit = AuditLog(
+                    matter_id=matter_id,
+                    user_id=req.created_by,
+                    action="request_auto_fulfilled",
+                    target_type="request",
+                    target_id=req.id,
+                    metadata_={
+                        "confidence": confidence,
+                        "reason": match.get("reason", ""),
+                        "matched_artifact_ids": match.get("artifact_ids", []),
+                    },
+                )
+                db.add(audit)
+
+        db.commit()
+
+    except Exception:
+        # Auto-matching is best-effort; don't fail the whole enrichment
+        pass

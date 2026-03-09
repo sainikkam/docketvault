@@ -1,0 +1,233 @@
+MARTINEZ & COLE LLP
+Attorneys at Law
+600 Congress Avenue, Suite 1200
+Austin, Texas 78701
+(512) 555-0147
+efile@martinezcole.com
+
+
+March 7, 2026
+
+
+CONFIDENTIAL — ATTORNEY-CLIENT PRIVILEGED
+
+Ms. Jordan Lee
+Austin, TX 78704
+
+Re:   Lee v. [Employer] — Request for Production of Personal Digital Records
+      Case Reference: MC-2026-0342
+      Our File: 2026-ED-0087
+
+Dear Ms. Lee:
+
+Thank you for retaining our firm to represent you in your emotional distress and
+workplace injury claim. As we discussed in our initial consultation, building a
+strong case requires assembling a comprehensive record of how your workplace
+conditions affected your mental health, personal relationships, and daily life
+over the relevant period.
+
+This letter constitutes a formal Request for Production of Documents and
+Electronically Stored Information ("ESI") pursuant to our engagement agreement.
+Please gather and provide the materials described below at your earliest
+convenience, and no later than March 28, 2026.
+
+
+I.  SCOPE AND DATE RANGE
+
+We are requesting all responsive records from January 1, 2024 through
+December 31, 2025. This window covers the period in which you report the onset
+and progression of burnout, anxiety, sleep disruption, and related symptoms
+arising from your employment conditions.
+
+
+II.  CATEGORIES OF RECORDS REQUESTED
+
+Please produce the following categories of personal data exports. Where
+possible, export data in its native digital format (JSONL, CSV, JSON, or the
+platform's standard export format). Do not convert files to PDF or print them
+unless no digital export is available.
+
+
+A.  EMAIL COMMUNICATIONS
+
+All sent and received emails from your personal and work email accounts
+(including but not limited to Gmail, company email) that relate to:
+
+  - Communications with your therapist, Dr. Kim, including appointment
+    reminders, scheduling, and any written correspondence
+  - Communications with your manager or supervisor regarding workload,
+    performance reviews, the Director promotion track, or expressions of
+    work-related stress
+  - Communications with your partner Alex regarding the impact of work on your
+    personal life, including any messages expressing guilt, apology, or
+    acknowledgment of emotional distance
+  - Financial alerts or statements from banking institutions (e.g., Wells Fargo)
+    showing patterns relevant to therapy costs or financial stress
+
+Keywords to search: therapy, Dr. Kim, burnout, anxiety, sleep, promotion,
+performance review, sorry, checked out, present, distracted
+
+
+B.  CALENDAR AND SCHEDULING DATA
+
+Export your full calendar history from Google Calendar or any other scheduling
+platform for the relevant period. We are particularly interested in:
+
+  - Therapy and mental health appointments
+  - Work meetings, 1:1s with management, team offsites, and roadmap reviews
+    that demonstrate workload volume
+  - Personal appointments (medical, dental) showing health maintenance patterns
+  - Date nights or personal time with Alex, to establish work-life balance
+    patterns
+  - Fitness or wellness activities (running, gym) showing self-care attempts
+
+Keywords to search: therapy, Dr. Kim, 1:1, offsite, roadmap, date night,
+workout, run, dentist
+
+
+C.  FINANCIAL AND BANKING RECORDS
+
+All bank transaction records, credit card statements, and financial account
+summaries for the relevant period, including:
+
+  - Therapy and mental health copayments or provider payments
+  - Rent and housing costs establishing baseline financial obligations
+  - Subscription services (showing lifestyle patterns)
+  - Dining and social expenditures (showing behavioral changes over time)
+  - Savings deposits or withdrawal patterns related to your house down payment
+    goal
+
+Source systems: Wells Fargo, any banking app, financial aggregator exports
+
+Keywords to search: therapy, copay, rent, housing, savings
+
+
+D.  PERSONAL JOURNAL, LIFELOG, OR REFLECTION ENTRIES
+
+Any personal journal, diary, lifelog, or reflection entries you maintained
+during the relevant period, whether digital or handwritten (if handwritten,
+please photograph or scan). These are highly relevant because they capture
+your contemporaneous mental state. We are looking for entries discussing:
+
+  - Burnout symptoms, loss of motivation, or cynicism toward work
+  - Sleep disruption, insomnia, or 3am wake-ups
+  - Anxiety about career trajectory, imposter syndrome, or promotion concerns
+  - Relationship strain with Alex
+  - Therapy sessions and insights from sessions with Dr. Kim
+  - Milestones or improvements in health metrics (sleep, exercise)
+
+Keywords to search: burnout, sleep, anxiety, therapy, career, relationship,
+imposter, exhaustion, sustainable
+
+
+E.  AI ASSISTANT CONVERSATION HISTORY
+
+Export all conversation logs from AI assistants you have used (including but
+not limited to ChatGPT, Notion AI, or similar tools). These conversations may
+contain candid, contemporaneous expressions of distress that corroborate your
+claims. We are particularly interested in conversations about:
+
+  - Burnout symptoms and whether you were experiencing burnout
+  - Sleep problems and strategies to address them
+  - Workplace communication challenges and saying no to commitments
+  - Career anxiety, performance review preparation, and promotion concerns
+  - Relationship difficulties with Alex arising from work demands
+  - Financial planning stress (home purchase considerations)
+
+Keywords to search: burnout, sleep, anxiety, promotion, relationship, saying no,
+boundaries, performance review
+
+
+F.  SOCIAL MEDIA POSTS AND ACTIVITY
+
+Export your posting history from LinkedIn, Twitter/X, Instagram, and any other
+social media platforms used during the relevant period. These posts establish
+your public-facing persona and may be contrasted with private records to
+demonstrate the gap between outward presentation and internal distress.
+
+We are looking for:
+
+  - Professional achievement posts that contrast with private burnout entries
+  - Posts referencing therapy or mental health advocacy
+  - Posts about work milestones, career reflections, or team accomplishments
+  - Personal posts about Austin, running, hobbies, or weekend activities
+
+Keywords to search: burnout, therapy, mental health, career, shipped, milestone
+
+
+G.  FILE AND DOCUMENT METADATA
+
+Provide an index or export of key personal documents you created or maintained
+during the relevant period, including:
+
+  - Resume and career development documents
+  - Director promotion case or self-advocacy documents
+  - Therapy session notes or personal notes after sessions
+  - Financial planning documents (house budget calculators, savings projections)
+  - Health and wearable data exports (Fitbit weekly reports, sleep data)
+  - Product roadmap or work planning documents that show workload scope
+
+Keywords to search: resume, promotion, therapy notes, budget, Fitbit, roadmap
+
+
+III.  PRESERVATION NOTICE
+
+You are hereby instructed to preserve all documents, communications, and
+electronically stored information described in this letter. Do not delete,
+modify, overwrite, or allow the automatic destruction of any potentially
+responsive materials. This includes:
+
+  - Do not clear browser history, chat logs, or app data
+  - Do not uninstall or reset any applications that contain relevant data
+  - Do not allow cloud storage providers to auto-delete archived content
+  - Disable any auto-delete or retention policies on email and messaging
+    platforms for the duration of this matter
+
+Failure to preserve evidence may result in adverse consequences in litigation.
+
+
+IV.  FORMAT AND DELIVERY INSTRUCTIONS
+
+Please export and deliver your data as follows:
+
+  1. Use each platform's native export function where available (e.g., Google
+     Takeout for Gmail and Calendar, bank CSV export, ChatGPT export, etc.)
+  2. Preferred formats: JSONL, JSON, CSV, or the platform's default export
+     format. Do not convert to PDF unless no digital export exists.
+  3. Package all exports into a single ZIP file organized by data source
+     (e.g., emails/, calendar/, transactions/, etc.)
+  4. Upload the ZIP file through the secure DocketVault client portal associated
+     with matter MC-2026-0342
+  5. Do not email sensitive records — use only the secure upload portal
+
+If you need assistance with any data export process, please contact our office
+and we will provide step-by-step guidance.
+
+
+V.  DEADLINE AND NEXT STEPS
+
+Please produce all responsive materials by March 28, 2026. If you anticipate
+difficulty meeting this deadline for any category, please notify us immediately
+so we can discuss an extension or phased production schedule.
+
+Once we receive your data, our team will review it, build a comprehensive
+evidence timeline, and identify any gaps requiring follow-up. We will schedule
+a meeting to review the assembled evidence with you before any filing.
+
+Thank you for your prompt attention to this matter. If you have any questions
+about this request, please do not hesitate to contact me directly at
+(512) 555-0147 or efile@martinezcole.com.
+
+
+Sincerely,
+
+
+_______________________________
+Maria E. Martinez, Esq.
+Partner, Employment & Personal Injury Practice
+Martinez & Cole LLP
+
+Texas Bar No. 24098712
+
+cc:  Case File MC-2026-0342
+     David Cole, Esq. (co-counsel)

@@ -3,12 +3,13 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from lib.session import require_attorney, get_matter_id
 from lib.api_client import api_get_bytes
+from lib.theme import setup_page, page_header
 
+setup_page()
 require_attorney()
 matter_id = get_matter_id()
 
-st.title("Evidence Pack Export")
-st.caption("Download the complete Evidence Pack for this matter.")
+page_header("Evidence Pack Export", "Download the complete Evidence Pack for this matter")
 
 st.markdown("""
 The Evidence Pack contains:

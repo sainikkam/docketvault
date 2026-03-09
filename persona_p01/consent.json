@@ -1,0 +1,18 @@
+{
+  "persona_id": "p01",
+  "dataset_type": "synthetic",
+  "allowed_uses": [
+    "hackathon_demo",
+    "model_prompting",
+    "local_analysis",
+    "team_collaboration_within_event"
+  ],
+  "prohibited_uses": [
+    "attempt_reidentification",
+    "sharing_outside_event",
+    "commercial_use",
+    "training_production_models"
+  ],
+  "retention": "delete_after_2026-03-31",
+  "notes": "All records are fully synthetic and generated for the Data Portability Hackathon 2026. No real individuals are represented."
+}

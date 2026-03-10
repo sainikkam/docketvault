@@ -34,6 +34,18 @@ import base64
 # This is what keeps users logged in across browser refreshes.
 try_restore_session()
 
+# If a logout is pending, clear the refresh-token cookie now.
+# This runs during a normal render (no st.rerun() afterwards) so the
+# injected JavaScript actually executes in the browser.
+# NOTE: We keep _pending_logout in session_state (don't delete it)
+# because st.context.cookies is a stale snapshot from the initial HTTP
+# connection — it won't reflect the JS cookie deletion until the user
+# does a full browser refresh. The flag prevents try_restore_session()
+# from re-authenticating via that stale cookie on every rerun.
+if st.session_state.get("_pending_logout"):
+    from lib.cookies import clear_refresh_token
+    clear_refresh_token()
+
 
 # ── Join-matter form (used by client home + landing) ──────────
 
@@ -197,6 +209,8 @@ def _render_signin():
                 st.session_state.user_id = user["id"]
                 st.session_state.user_email = user["email"]
                 st.session_state.login_mode = None
+                # Clear logout guard so future session restores work
+                st.session_state.pop("_pending_logout", None)
                 # Auto-select first matter
                 try:
                     matters = api_get("/matters")
@@ -230,6 +244,8 @@ def _render_signin():
                 st.session_state.access_token = data["access_token"]
                 # Persist refresh token in browser cookie for session survival
                 save_refresh_token(data["refresh_token"])
+                # Clear logout guard so future session restores work
+                st.session_state.pop("_pending_logout", None)
                 user = api_get("/users/me")
                 st.session_state.role = user["role"]
                 st.session_state.user_id = user["id"]

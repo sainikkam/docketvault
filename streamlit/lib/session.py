@@ -10,6 +10,11 @@ def try_restore_session() -> bool:
 
     Returns True if the session is authenticated after the attempt.
     """
+    # A pending logout means the user just clicked Logout. Don't restore
+    # from the cookie — it will be cleared during this render cycle.
+    if st.session_state.get("_pending_logout"):
+        return False
+
     if st.session_state.get("access_token"):
         return True
 

@@ -329,18 +329,30 @@ try:
 
     # ── Bulk actions ─────────────────────────────────────────
 
-    col_approve_all, col_revoke_all = st.columns(2)
+    col_share, col_revoke = st.columns(2)
 
-    with col_approve_all:
-        if st.button("Approve All & Share", type="primary"):
-            try:
-                result = api_post(f"/matters/{matter_id}/share-preview/approve-all")
-                st.success(f"Approved {result.get('approved', 0)} items!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Failed: {e}")
+    with col_share:
+        if approved == 0:
+            st.button("Share", type="primary", disabled=True)
+            st.caption("Approve at least one item above before sharing.")
+        else:
+            if st.button("Share", type="primary"):
+                try:
+                    result = api_post(
+                        f"/matters/{matter_id}/share-preview/share-approved"
+                    )
+                    shared = result.get("shared", 0)
+                    if shared > 0:
+                        st.success(
+                            f"Shared {shared} approved items with your attorney!"
+                        )
+                    else:
+                        st.warning("No approved items to share.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed: {e}")
 
-    with col_revoke_all:
+    with col_revoke:
         if st.button("Revoke All Sharing"):
             try:
                 result = api_post(f"/matters/{matter_id}/revoke")

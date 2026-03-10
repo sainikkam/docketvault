@@ -138,6 +138,57 @@ async def approve_all(
     return {"approved": approved_count}
 
 
+@router.post("/matters/{matter_id}/share-preview/share-approved")
+async def share_approved(
+    matter_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Share only the items the client has already individually approved.
+
+    Unlike approve-all, this does NOT change pending items to approved.
+    It only notifies attorneys about the items already marked as approved.
+    Returns the count of approved items that are now shared.
+    """
+    await require_matter_role(
+        matter_id, ["primary_client", "contributor_client"], user, db
+    )
+
+    # Count how many items are already approved
+    result = await db.execute(
+        select(SharePolicy).where(
+            SharePolicy.matter_id == matter_id,
+            SharePolicy.owner_user_id == user.id,
+            SharePolicy.state == "approved",
+        )
+    )
+    approved_policies = list(result.scalars().all())
+    approved_count = len(approved_policies)
+
+    if approved_count == 0:
+        return {"shared": 0, "message": "No approved items to share."}
+
+    await log_action(
+        db,
+        user_id=user.id,
+        action="share_confirmed",
+        matter_id=matter_id,
+        metadata={"count": approved_count},
+    )
+
+    # Notify attorneys about the shared items
+    for attorney_id in await get_matter_attorneys(db, matter_id):
+        await notify(
+            db, attorney_id, "sharing.approved",
+            f"Client shared {approved_count} approved items",
+            matter_id=matter_id,
+            metadata={"count": approved_count},
+        )
+    await db.commit()
+
+    return {"shared": approved_count}
+
+
 @router.post("/matters/{matter_id}/revoke")
 async def revoke_all(
     matter_id: UUID,

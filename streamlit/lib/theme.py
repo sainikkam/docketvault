@@ -190,12 +190,13 @@ def setup_sidebar():
 
     st.sidebar.divider()
 
-    # Logout — clear session state AND the refresh-token cookie
+    # Logout — clear session state now, cookie gets cleared on next render.
+    # We set a _pending_logout flag so try_restore_session() won't
+    # re-authenticate from the stale cookie before the JS executes.
     if st.sidebar.button("Logout", use_container_width=True):
-        from lib.cookies import clear_refresh_token
-        clear_refresh_token()
         for k in ["access_token", "role", "user_id", "matter_id", "user_email", "login_mode"]:
             st.session_state[k] = None
+        st.session_state["_pending_logout"] = True
         st.rerun()
 
 

@@ -191,10 +191,37 @@ def _summarize_records_for_llm(records: list) -> str:
 
 
 def _parse_json_response(raw_text: str) -> dict:
-    """Strip markdown code fences and parse JSON."""
+    """Strip markdown code fences and parse JSON.
+
+    Handles truncated responses by attempting simple repairs:
+    closing open strings, arrays, and objects. This prevents
+    enrichment from failing when the LLM hits the token limit.
+    """
     if raw_text.startswith("```"):
         raw_text = raw_text.split("\n", 1)[1].rsplit("```", 1)[0]
-    return json.loads(raw_text)
+
+    try:
+        return json.loads(raw_text)
+    except json.JSONDecodeError:
+        # Try to repair truncated JSON by closing open structures.
+        # Count unmatched brackets/braces and append closers.
+        repaired = raw_text.rstrip()
+
+        # If we're inside an unterminated string, close it
+        in_string = False
+        for i, ch in enumerate(repaired):
+            if ch == '"' and (i == 0 or repaired[i - 1] != '\\'):
+                in_string = not in_string
+        if in_string:
+            repaired += '"'
+
+        # Close any open arrays and objects
+        open_braces = repaired.count('{') - repaired.count('}')
+        open_brackets = repaired.count('[') - repaired.count(']')
+        repaired += ']' * max(0, open_brackets)
+        repaired += '}' * max(0, open_braces)
+
+        return json.loads(repaired)
 
 
 def _build_matter_context(matter_id: UUID, db: Session) -> str:
@@ -578,6 +605,8 @@ def enrich_matter(self, matter_id: str):
         checklist_text = json.dumps(template.checklist, indent=2) if template else "[]"
 
         # --- LLM Call 2: Missing Items + Intake Summary ---
+        # Use 8192 tokens — cases with many records produce long summaries
+        # that were getting truncated at 4096, causing JSON parse failures.
         response2 = client.messages.create(
             model=settings.LLM_MODEL,
             system=MISSING_SUMMARY_SYSTEM,
@@ -593,7 +622,7 @@ def enrich_matter(self, matter_id: str):
                     ),
                 }
             ],
-            max_tokens=4096,
+            max_tokens=8192,
         )
         data2 = _parse_json_response(response2.content[0].text)
 

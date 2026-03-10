@@ -72,7 +72,9 @@ class EvidenceRequest(BaseID, table=True):
     # Search terms the client should use when finding data
     keywords: list = Field(default=[], sa_column=Column(JSON))
     # Where the client should look (Gmail, WhatsApp, Company laptop, etc.)
-    source_system: Optional[str] = Field(default=None, max_length=100)
+    source_system: Optional[str] = Field(
+        default=None, sa_column=Column("source_system", Text)
+    )
     # How to deliver the data (native format, PDF, etc.)
     format_instructions: Optional[str] = Field(
         default=None, sa_column=Column("format_instructions", Text)

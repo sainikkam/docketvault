@@ -21,6 +21,21 @@ class SharePolicy(BaseID, table=True):
     revoked_at: Optional[datetime] = Field(default=None)
 
 
+class RecordShareState(BaseID, table=True):
+    """Per-record inclusion/exclusion within an approved artifact.
+
+    Lets clients approve a multi-item file (e.g. JSONL of emails) while
+    choosing exactly which individual records to share with the attorney.
+    Default state is "included"; records below the relevance threshold
+    are auto-set to "excluded" when the SharePolicy is first created.
+    """
+    __tablename__ = "record_share_states"
+    __table_args__ = (UniqueConstraint("share_policy_id", "record_id"),)
+    share_policy_id: UUID = Field(foreign_key="share_policies.id", index=True)
+    record_id: UUID = Field(foreign_key="records.id", index=True)
+    state: str = Field(default="included", max_length=20)  # included | excluded
+
+
 # --- Request/response schemas ---
 
 
@@ -32,3 +47,13 @@ class ShareUpdate(SQLModel):
 
 class BatchShareUpdateRequest(SQLModel):
     updates: list[ShareUpdate]
+
+
+class RecordShareUpdate(SQLModel):
+    record_id: str
+    state: str  # "included" | "excluded"
+
+
+class BatchRecordShareUpdateRequest(SQLModel):
+    artifact_id: str
+    updates: list[RecordShareUpdate]

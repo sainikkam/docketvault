@@ -2,6 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 
 from app.auth.models import User
 from app.auth.service import get_current_user
@@ -21,8 +22,11 @@ from app.evidence.service import (
     get_record,
     list_artifacts,
     list_records,
+    list_records_for_artifact,
 )
 from app.matters.service import log_action, require_matter_member, require_matter_role
+from app.sharing.service import get_approved_artifact_ids, get_included_record_ids
+from app.sharing.models import SharePolicy
 from app.storage import get_storage
 
 router = APIRouter()
@@ -32,18 +36,32 @@ EXTRACTABLE_MIMES = {"image/jpeg", "image/png", "image/webp", "application/pdf"}
 AUDIO_MIMES = {"audio/mpeg", "audio/mp4", "audio/wav", "audio/webm", "audio/ogg"}
 
 
-def _dispatch_extraction_tasks(artifacts):
-    """Dispatch Celery extraction tasks for extractable artifacts. Best-effort."""
+def _dispatch_extraction_tasks(artifacts, matter_id: UUID):
+    """Dispatch Celery extraction tasks for extractable artifacts.
+
+    If no artifacts need extraction (e.g. all are JSONL/CSV that were
+    already parsed into Records), trigger the enrichment pipeline directly
+    so categorization and relevance scoring still happen.
+    """
     try:
         from app.extraction.tasks import extract_audio, extract_image_pdf
 
+        dispatched = 0
         for a in artifacts:
             if a.status != "processing":
                 continue
             if a.mime_type in EXTRACTABLE_MIMES:
                 extract_image_pdf.delay(str(a.id))
+                dispatched += 1
             elif a.mime_type in AUDIO_MIMES:
                 extract_audio.delay(str(a.id))
+                dispatched += 1
+
+        # If nothing needed extraction, trigger enrichment now.
+        # Otherwise enrichment triggers after the last extraction completes.
+        if dispatched == 0 and artifacts:
+            from app.enrichment.tasks import enrich_matter
+            enrich_matter.delay(str(matter_id))
     except Exception:
         pass  # Redis/Celery not running — extraction skipped
 
@@ -99,8 +117,9 @@ async def upload_evidence(
 
     await db.commit()
 
-    # Dispatch extraction tasks for image/PDF artifacts
-    _dispatch_extraction_tasks(all_artifacts)
+    # Dispatch extraction tasks for extractable artifacts,
+    # or trigger enrichment directly if all files are pre-parsed (JSONL/CSV)
+    _dispatch_extraction_tasks(all_artifacts, matter_id)
 
     for artifact in all_artifacts:
         await log_action(
@@ -162,6 +181,59 @@ async def download_artifact(
         key = uri
     url = await storage.signed_url(key)
     return {"url": url}
+
+
+@router.get("/artifacts/{artifact_id}/records")
+async def list_artifact_records(
+    artifact_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List individual records within a multi-item artifact.
+
+    For attorneys/paralegals: only returns records with state='included'
+    in the RecordShareState table (respects per-record approval).
+    For clients: returns all records.
+    """
+    artifact = await get_artifact(artifact_id, db)
+    member = await require_matter_member(artifact.matter_id, user, db)
+
+    records = await list_records_for_artifact(artifact, db)
+
+    # For attorneys, filter to only included records
+    if member.role in ("attorney", "paralegal"):
+        # Find the share policy for this artifact
+        pol_result = await db.execute(
+            select(SharePolicy).where(
+                SharePolicy.artifact_id == artifact_id,
+                SharePolicy.state == "approved",
+            )
+        )
+        policy = pol_result.scalars().first()
+        if not policy:
+            return {"records": [], "total": 0, "included": 0}
+
+        included_ids = await get_included_record_ids(db, policy.id)
+        # If no RecordShareState rows exist, all records are included
+        if included_ids:
+            records = [r for r in records if r.id in included_ids]
+
+    return {
+        "records": [
+            {
+                "id": str(r.id),
+                "text": r.text,
+                "ts": str(r.ts) if r.ts else None,
+                "source": r.source,
+                "type": r.type,
+                "relevance_score": r.relevance_score,
+                "category": r.category,
+                "tags": r.tags,
+            }
+            for r in records
+        ],
+        "total": len(records),
+    }
 
 
 @router.get("/matters/{matter_id}/records", response_model=list[RecordResponse])

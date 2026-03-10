@@ -137,11 +137,16 @@ def _entry_to_record(
     Maps common portable-export fields to the Record model. Unknown fields
     are preserved in metadata_ so nothing is lost.
     """
-    # Parse timestamp if present
+    # Parse timestamp if present. Convert to naive UTC because
+    # the DB column is TIMESTAMP WITHOUT TIME ZONE.
     ts = None
     if entry.get("ts"):
         try:
-            ts = datetime.fromisoformat(entry["ts"])
+            parsed = datetime.fromisoformat(entry["ts"])
+            if parsed.tzinfo is not None:
+                from datetime import timezone
+                parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+            ts = parsed
         except (ValueError, TypeError):
             pass
 

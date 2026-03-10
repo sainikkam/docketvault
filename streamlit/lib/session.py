@@ -2,10 +2,9 @@ import streamlit as st
 
 
 def require_login():
-    """Redirect to login if not authenticated."""
+    """Redirect to the landing/login page if not authenticated."""
     if not st.session_state.get("access_token"):
-        st.warning("Please log in first.")
-        st.stop()
+        st.switch_page("streamlit_app.py")
 
 
 def require_client():

@@ -81,7 +81,7 @@ async def get_missing_items(
 @router.patch("/missing-items/{item_id}")
 async def update_missing_item(
     item_id: UUID,
-    status: str = Query(..., regex="^(fulfilled|dismissed)$"),
+    status: str = Query(..., pattern="^(fulfilled|dismissed)$"),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -117,3 +117,28 @@ async def get_intake_summary(
     if not summary:
         raise HTTPException(404, "Intake summary not yet generated")
     return summary
+
+
+@router.post("/matters/{matter_id}/enrich")
+async def trigger_enrichment(
+    matter_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Manually trigger the AI enrichment pipeline for a matter.
+
+    Kicks off categorization, relevance scoring, timeline extraction,
+    missing-item detection, and intake summary generation. Safe to call
+    multiple times — results are upserted.
+    """
+    await require_matter_member(matter_id, user, db)
+
+    from app.enrichment.tasks import enrich_matter
+
+    try:
+        enrich_matter.delay(str(matter_id))
+        return {"status": "processing", "message": "Enrichment started. Refresh in a few seconds."}
+    except Exception as e:
+        raise HTTPException(
+            503, f"Could not start enrichment. Is the worker running? {e}"
+        )

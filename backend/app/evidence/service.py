@@ -95,15 +95,19 @@ class IngestionService:
 
 
 async def list_artifacts(
-    matter_id: UUID, db: AsyncSession, limit: int = 50, offset: int = 0
+    matter_id: UUID,
+    db: AsyncSession,
+    limit: int = 50,
+    offset: int = 0,
+    sort_by: str = "relevance",
 ) -> list[Artifact]:
-    result = await db.execute(
-        select(Artifact)
-        .where(Artifact.matter_id == matter_id)
-        .order_by(Artifact.import_timestamp.desc())
-        .limit(limit)
-        .offset(offset)
-    )
+    """List artifacts. sort_by can be 'relevance' (highest first) or 'timestamp'."""
+    query = select(Artifact).where(Artifact.matter_id == matter_id)
+    if sort_by == "relevance":
+        query = query.order_by(Artifact.relevance_score.desc(), Artifact.import_timestamp.desc())
+    else:
+        query = query.order_by(Artifact.import_timestamp.desc())
+    result = await db.execute(query.limit(limit).offset(offset))
     return list(result.scalars().all())
 
 
@@ -130,6 +134,31 @@ async def list_records(
     return list(result.scalars().all())
 
 
+async def list_records_for_artifact(
+    artifact: Artifact, db: AsyncSession
+) -> list[Record]:
+    """Return all records that belong to a specific artifact.
+
+    Records are linked via metadata_.source_file matching the artifact filename.
+    Sorted by relevance (highest first).
+    """
+    result = await db.execute(
+        select(Record)
+        .where(
+            Record.matter_id == artifact.matter_id,
+            Record.owner_user_id == artifact.owner_user_id,
+        )
+        .order_by(Record.relevance_score.desc())
+    )
+    all_records = list(result.scalars().all())
+    return [
+        r for r in all_records
+        if r.metadata_
+        and isinstance(r.metadata_, dict)
+        and r.metadata_.get("source_file") == artifact.original_filename
+    ]
+
+
 async def get_record(record_id: UUID, db: AsyncSession) -> Record:
     from fastapi import HTTPException
 
@@ -138,3 +167,90 @@ async def get_record(record_id: UUID, db: AsyncSession) -> Record:
     if not record:
         raise HTTPException(status_code=404, detail="Record not found")
     return record
+
+
+# Relevance threshold: items below this are "potentially not relevant"
+RELEVANCE_THRESHOLD = 0.4
+
+
+async def build_evidence_preview(
+    matter_id: UUID, user_id: UUID, db: AsyncSession
+) -> dict:
+    """Build an organized evidence preview for the client.
+
+    Returns artifacts grouped into three sections:
+    1. relevant — items scored above the threshold, sorted by relevance
+    2. sensitive — items with any sensitivity flag, regardless of relevance
+    3. low_relevance — items scored below the threshold
+    Each item includes extraction summary and sensitivity flags.
+    """
+    from app.extraction.models import Extraction
+
+    # Fetch all artifacts owned by this user in this matter
+    result = await db.execute(
+        select(Artifact)
+        .where(Artifact.matter_id == matter_id, Artifact.owner_user_id == user_id)
+        .order_by(Artifact.relevance_score.desc())
+    )
+    artifacts = list(result.scalars().all())
+
+    # Batch-fetch all extractions for these artifacts
+    art_ids = [a.id for a in artifacts]
+    ext_result = await db.execute(
+        select(Extraction).where(Extraction.artifact_id.in_(art_ids))
+    )
+    ext_map = {e.artifact_id: e for e in ext_result.scalars().all()}
+
+    relevant = []
+    sensitive = []
+    low_relevance = []
+
+    for art in artifacts:
+        ext = ext_map.get(art.id)
+        is_sensitive = False
+        sensitivity_flags = {}
+        if ext and ext.sensitivity_flags:
+            sensitivity_flags = ext.sensitivity_flags
+            is_sensitive = any(sensitivity_flags.values())
+
+        item = {
+            "artifact_id": str(art.id),
+            "filename": art.original_filename,
+            "mime_type": art.mime_type,
+            "status": art.status,
+            "category": art.category,
+            "relevance_score": art.relevance_score,
+            "relevance_rationale": art.relevance_rationale or "",
+            "tags": art.tags,
+            "is_sensitive": is_sensitive,
+            "sensitivity_flags": sensitivity_flags,
+            "summary": (ext.summary or ext.overall_summary or "") if ext else "",
+            "doc_type": ext.doc_type_guess if ext else "unknown",
+            "uploaded_at": str(art.import_timestamp),
+        }
+
+        # Sensitive items always appear in the sensitive section
+        if is_sensitive:
+            sensitive.append(item)
+
+        if art.relevance_score >= RELEVANCE_THRESHOLD:
+            relevant.append(item)
+        else:
+            low_relevance.append(item)
+
+    # Group relevant items by category for display
+    relevant_by_category: dict[str, list] = {}
+    for item in relevant:
+        cat = item["category"]
+        relevant_by_category.setdefault(cat, []).append(item)
+
+    return {
+        "matter_id": str(matter_id),
+        "total": len(artifacts),
+        "relevant_count": len(relevant),
+        "sensitive_count": len(sensitive),
+        "low_relevance_count": len(low_relevance),
+        "relevant_by_category": relevant_by_category,
+        "sensitive_items": sensitive,
+        "low_relevance_items": low_relevance,
+    }

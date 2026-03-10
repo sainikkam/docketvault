@@ -2,8 +2,9 @@ import streamlit as st
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from lib.session import require_client, get_matter_id
-from lib.api_client import api_post_files, api_get, api_post, api_patch
+from lib.api_client import api_post_files, api_get, api_post, api_patch, is_google_connected
 from lib.theme import setup_page, page_header, step_indicator
+from lib.gmail_widget import gmail_search_widget
 
 setup_page()
 require_client()
@@ -135,7 +136,12 @@ if uploaded_files and st.button("Upload All"):
     files_data = [(f.name, f.read(), f.type or "application/octet-stream") for f in uploaded_files]
     try:
         result = api_post_files(f"/matters/{matter_id}/evidence/upload", files_data)
-        st.success(f"Uploaded {result.get('uploaded', len(files_data))} files!")
+        count = result.get("uploaded", len(files_data))
+        st.success(
+            f"Uploaded {count} files! "
+            "AI is now analyzing your evidence for relevance and categorization. "
+            "Go to Evidence Review to see results (takes ~30 seconds)."
+        )
     except Exception as e:
         st.error(f"Upload failed: {e}")
 
@@ -149,8 +155,18 @@ try:
     if artifacts:
         for a in artifacts:
             status = a.get("status", "unknown")
-            icon = "processing" if status == "processing" else status
-            st.write(f"- **{a['original_filename']}** ({a['mime_type']}) — {icon}")
+            score = a.get("relevance_score", 0.0)
+            cat = a.get("category", "uncategorized")
+
+            # Show status with relevance if scored
+            if score > 0:
+                st.write(
+                    f"- **{a['original_filename']}** ({a['mime_type']}) — "
+                    f"{cat} | Relevance: {score:.0%}"
+                )
+            else:
+                label = "processing" if status == "processing" else status
+                st.write(f"- **{a['original_filename']}** ({a['mime_type']}) — {label}")
     else:
         st.info("No evidence uploaded yet.")
 except Exception as e:
@@ -158,16 +174,42 @@ except Exception as e:
 
 st.divider()
 
-# ── Google Drive Import ───────────────────────────────────────
+# ── Google Import (Drive + Gmail) ─────────────────────────────
 
-st.subheader("Import from Google Drive")
-st.caption("Connect your Google account to import files directly.")
-if st.button("Connect Google Drive"):
-    try:
-        data = api_get("/oauth/google/authorize")
-        st.markdown(f"[Click here to authorize Google Drive]({data['authorize_url']})")
-    except Exception as e:
-        st.error(f"Failed to start OAuth: {e}")
+st.subheader("Import from Google")
+
+# Single connection check shared by both tabs
+google_ok = is_google_connected()
+
+if google_ok:
+    st.success("Google account connected — Drive and Gmail are ready", icon="✅")
+else:
+    st.info("Connect your Google account to import from Drive or search Gmail.")
+    if st.button("Connect Google Account", type="primary"):
+        try:
+            data = api_get("/oauth/google/authorize")
+            st.markdown(f"[Click here to authorize]({data['authorize_url']})")
+        except Exception as e:
+            st.error(f"Failed to start OAuth: {e}")
+
+drive_tab, gmail_tab = st.tabs(["📁 Google Drive", "✉️ Gmail Search"])
+
+with drive_tab:
+    if not google_ok:
+        st.caption("Connect your Google account above to browse Drive files.")
+    else:
+        try:
+            files = api_get("/oauth/google/drive/files").get("files", [])
+            if files:
+                for f in files:
+                    st.write(f"- **{f['name']}** ({f.get('mimeType', '')})")
+            else:
+                st.info("No files found in your Google Drive.")
+        except Exception as e:
+            st.warning(f"Could not list Drive files: {e}")
+
+with gmail_tab:
+    gmail_search_widget(matter_id, google_connected=google_ok)
 
 # ── Next step ─────────────────────────────────────────────────
 

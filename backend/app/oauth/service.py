@@ -1,4 +1,5 @@
 import io
+import os
 from datetime import datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,6 +9,11 @@ from app.oauth.models import ConnectedAccount
 
 settings = Settings()
 
+# Allow HTTP redirect URIs for local development (Google's oauthlib
+# rejects non-HTTPS redirect URIs without this flag).
+if settings.GOOGLE_REDIRECT_URI.startswith("http://localhost"):
+    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+
 
 class GoogleOAuthService:
     def __init__(self):
@@ -15,53 +21,58 @@ class GoogleOAuthService:
         self.client_secret = settings.GOOGLE_CLIENT_SECRET
         self.redirect_uri = settings.GOOGLE_REDIRECT_URI
 
-    def _client_config(self):
-        return {
-            "web": {
-                "client_id": self.client_id,
-                "client_secret": self.client_secret,
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-            }
-        }
+    # Google OAuth endpoints
+    _AUTH_URL = "https://accounts.google.com/o/oauth2/auth"
+    _TOKEN_URL = "https://oauth2.googleapis.com/token"
 
     def get_authorize_url(self, scopes: list[str], state: str) -> str:
-        from google_auth_oauthlib.flow import Flow
+        """Build the Google OAuth consent URL directly (no PKCE).
 
-        flow = Flow.from_client_config(
-            self._client_config(),
-            scopes=scopes,
-            redirect_uri=self.redirect_uri,
-        )
-        url, _ = flow.authorization_url(
-            access_type="offline",
-            include_granted_scopes="true",
-            state=state,
-            prompt="consent",
-        )
-        return url
+        We avoid google_auth_oauthlib.Flow here because it
+        auto-generates a PKCE code_verifier that we'd need to
+        persist across requests. Since we're a confidential client
+        (we have a client_secret), PKCE is optional.
+        """
+        from urllib.parse import urlencode
+
+        params = {
+            "client_id": self.client_id,
+            "redirect_uri": self.redirect_uri,
+            "response_type": "code",
+            "scope": " ".join(scopes),
+            "access_type": "offline",
+            "include_granted_scopes": "true",
+            "state": state,
+            "prompt": "consent",
+        }
+        return f"{self._AUTH_URL}?{urlencode(params)}"
 
     def exchange_code(self, code: str) -> dict:
-        from google_auth_oauthlib.flow import Flow
+        """Exchange the authorization code for tokens via direct HTTP POST.
 
-        flow = Flow.from_client_config(
-            self._client_config(),
-            scopes=[
-                "https://www.googleapis.com/auth/drive.readonly",
-                "https://www.googleapis.com/auth/gmail.readonly",
-            ],
-            redirect_uri=self.redirect_uri,
+        This avoids the Flow class's PKCE requirement entirely.
+        """
+        import httpx
+
+        resp = httpx.post(
+            self._TOKEN_URL,
+            data={
+                "code": code,
+                "client_id": self.client_id,
+                "client_secret": self.client_secret,
+                "redirect_uri": self.redirect_uri,
+                "grant_type": "authorization_code",
+            },
+            timeout=15,
         )
-        flow.fetch_token(code=code)
-        creds = flow.credentials
-        if creds.expiry:
-            expires_at = creds.expiry
-        else:
-            expires_at = datetime.utcnow() + timedelta(hours=1)
+        resp.raise_for_status()
+        data = resp.json()
+
+        expires_in = data.get("expires_in", 3600)
         return {
-            "access_token": creds.token,
-            "refresh_token": creds.refresh_token or "",
-            "expires_at": expires_at,
+            "access_token": data["access_token"],
+            "refresh_token": data.get("refresh_token", ""),
+            "expires_at": datetime.utcnow() + timedelta(seconds=expires_in),
         }
 
     async def ensure_fresh_token(self, account: ConnectedAccount, db: AsyncSession):

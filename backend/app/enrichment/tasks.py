@@ -14,12 +14,19 @@ from app.firms.models import MatterTemplate
 from app.matters.models import EvidenceRequest, Matter
 from app.worker import celery_app
 
+# Import all table models so SQLAlchemy resolves foreign keys correctly
+import app.auth.models  # noqa: F401 — registers users table
+import app.sharing.models  # noqa: F401 — registers share_policies table
+import app.notifications.models  # noqa: F401
+
 CATEGORIZE_TIMELINE_SYSTEM = (
-    "You are a legal intake assistant for landlord-tenant disputes. "
-    "Given a list of evidence items (records with extraction summaries), do two things:\n"
-    "1. Categorize each item and suggest tags\n"
+    "You are a legal intake assistant. "
+    "Given a list of evidence items (records and artifacts with extraction summaries), do two things:\n"
+    "1. Categorize EVERY item and assign a relevance score (0.0 = not relevant, 1.0 = critical)\n"
     "2. Build a chronological timeline of key events\n"
-    "Extract only what is supported by the evidence. Cite record IDs for every claim."
+    "Score relevance based on how useful the item is for the legal matter described. "
+    "Items that are clearly unrelated (personal photos, spam, generic docs) should get low scores. "
+    "Extract only what is supported by the evidence. Cite item IDs for every claim."
 )
 
 CATEGORIZE_TIMELINE_USER = """Matter: {matter_title}
@@ -28,10 +35,11 @@ Evidence items:
 {items_text}
 
 Return JSON with:
-- categorizations: list of {{"record_id": str, "category": str, "tags": [str], "relevance_score": float}}
-  Categories: lease_documents, communications, financial_records, notices, photos_evidence, calendar_events, other
-- timeline_events: list of {{"event_type": str, "title": str, "event_ts": str|null, "actors": [str], "summary": str, "confidence": float, "citations": [{{"record_id": str, "excerpt": str}}], "related_record_ids": [str]}}
-  Event types: lease_signed, notice_received, rent_paid, repair_requested, complaint_filed, eviction_notice, deposit_dispute, other
+- categorizations: list of {{"item_id": str, "item_type": "record"|"artifact", "category": str, "tags": [str], "relevance_score": float, "relevance_rationale": str}}
+  Categories: lease_documents, communications, financial_records, notices, photos_evidence, calendar_events, medical_records, personal_journal, ai_conversations, social_media, other
+  relevance_rationale: 1 sentence explaining why this item is or isn't relevant
+- timeline_events: list of {{"event_type": str, "title": str, "event_ts": str|null, "actors": [str], "summary": str, "confidence": float, "citations": [{{"item_id": str, "excerpt": str}}], "related_item_ids": [str]}}
+  Event types: lease_signed, notice_received, rent_paid, repair_requested, complaint_filed, eviction_notice, deposit_dispute, therapy_session, workplace_incident, other
 """
 
 MISSING_SUMMARY_SYSTEM = (
@@ -91,11 +99,168 @@ If no artifacts match a request, omit that request from the list.
 """
 
 
+MAX_SAMPLE_PER_SOURCE = 5
+MAX_RECORD_TEXT_LEN = 300
+# Per-record scoring: max records sent per LLM call
+MAX_RECORDS_PER_SCORING_BATCH = 50
+MAX_RECORD_PREVIEW_LEN = 400
+
+RECORD_SCORING_SYSTEM = (
+    "You are a legal evidence relevance scorer. "
+    "Given a legal matter description and a list of individual records "
+    "(emails, messages, transactions, etc.) from a single file, "
+    "score each record's relevance to the matter on a 0.0-1.0 scale.\n"
+    "0.0 = completely unrelated (spam, personal, off-topic)\n"
+    "0.4 = marginally relevant (tangential mention)\n"
+    "0.7 = clearly relevant (directly discusses the matter)\n"
+    "1.0 = critical evidence (key document for the case)\n"
+    "Be discriminating — most records in a bulk file are NOT relevant."
+)
+
+RECORD_SCORING_USER = """Matter: {matter_title}
+
+Records from file "{source_file}":
+{records_text}
+
+Return JSON with:
+- scores: list of {{"record_id": str, "relevance_score": float, "relevance_rationale": str}}
+
+Score EVERY record listed above. Keep rationale to one short sentence.
+"""
+
+
+def _summarize_records_for_llm(records: list) -> str:
+    """Build a compact summary of records grouped by source file.
+
+    Instead of sending every record to the LLM (which can be 1000+),
+    we group by source file and send: count, date range, types found,
+    and a sample of representative text entries.
+    """
+    from collections import defaultdict
+
+    by_source: dict[str, list] = defaultdict(list)
+    for rec in records:
+        source_file = ""
+        if rec.metadata_ and isinstance(rec.metadata_, dict):
+            source_file = rec.metadata_.get("source_file", rec.source)
+        else:
+            source_file = rec.source
+        by_source[source_file].append(rec)
+
+    lines = []
+    for source_file, recs in by_source.items():
+        count = len(recs)
+        types = set(r.type for r in recs if r.type)
+        sources = set(r.source for r in recs if r.source)
+
+        # Date range
+        dates = [r.ts for r in recs if r.ts]
+        date_range = ""
+        if dates:
+            earliest = min(dates).strftime("%Y-%m-%d")
+            latest = max(dates).strftime("%Y-%m-%d")
+            date_range = f" | date_range={earliest} to {latest}"
+
+        # Sample entries — take first few representative records
+        samples = []
+        for r in recs[:MAX_SAMPLE_PER_SOURCE]:
+            text_preview = r.text[:MAX_RECORD_TEXT_LEN].replace("\n", " ")
+            samples.append(f"    sample: [{r.type}] {text_preview}")
+
+        lines.append(
+            f"- source_file={source_file} | {count} records | "
+            f"types={','.join(types)} | sources={','.join(sources)}{date_range}"
+        )
+        lines.extend(samples)
+
+    return "\n".join(lines) + "\n" if lines else ""
+
+
 def _parse_json_response(raw_text: str) -> dict:
     """Strip markdown code fences and parse JSON."""
     if raw_text.startswith("```"):
         raw_text = raw_text.split("\n", 1)[1].rsplit("```", 1)[0]
     return json.loads(raw_text)
+
+
+def _score_individual_records(
+    matter_title: str,
+    artifacts: list,
+    records: list,
+    client,
+    settings,
+    db: Session,
+):
+    """Score individual records within multi-item artifacts.
+
+    After the main categorization pass (which scores at the artifact level
+    and propagates uniformly), this does a focused second pass on each
+    multi-item artifact to give each record its own relevance score.
+    This enables per-record pre-selection in the sharing UI.
+    """
+    from collections import defaultdict
+
+    # Group records by their source artifact filename
+    by_source: dict[str, list] = defaultdict(list)
+    for rec in records:
+        source_file = ""
+        if rec.metadata_ and isinstance(rec.metadata_, dict):
+            source_file = rec.metadata_.get("source_file", "")
+        if source_file:
+            by_source[source_file].append(rec)
+
+    # Only process artifacts that actually have child records
+    art_filename_set = {a.original_filename for a in artifacts}
+    sources_with_records = [sf for sf in by_source if sf in art_filename_set]
+
+    for source_file in sources_with_records:
+        recs = by_source[source_file]
+        if len(recs) <= 1:
+            continue  # single-record files don't need individual scoring
+
+        # Process in batches to stay within token limits
+        for batch_start in range(0, len(recs), MAX_RECORDS_PER_SCORING_BATCH):
+            batch = recs[batch_start:batch_start + MAX_RECORDS_PER_SCORING_BATCH]
+
+            records_text = ""
+            for rec in batch:
+                preview = rec.text[:MAX_RECORD_PREVIEW_LEN].replace("\n", " ")
+                ts_str = rec.ts.isoformat() if rec.ts else "no date"
+                records_text += (
+                    f"- record_id={rec.id} | type={rec.type} | "
+                    f"date={ts_str} | text: {preview}\n"
+                )
+
+            try:
+                response = client.messages.create(
+                    model=settings.LLM_MODEL,
+                    system=RECORD_SCORING_SYSTEM,
+                    messages=[{
+                        "role": "user",
+                        "content": RECORD_SCORING_USER.format(
+                            matter_title=matter_title,
+                            source_file=source_file,
+                            records_text=records_text,
+                        ),
+                    }],
+                    max_tokens=4096,
+                )
+                data = _parse_json_response(response.content[0].text)
+
+                # Apply individual scores
+                rec_map = {str(r.id): r for r in batch}
+                for score_entry in data.get("scores", []):
+                    rid = score_entry.get("record_id", "")
+                    rec = rec_map.get(rid)
+                    if rec:
+                        rec.relevance_score = score_entry.get("relevance_score", 0.0)
+                        db.add(rec)
+
+            except Exception:
+                # Per-record scoring is best-effort; don't fail enrichment
+                pass
+
+        db.flush()
 
 
 def check_and_trigger_enrichment(matter_id: UUID, db: Session):
@@ -141,14 +306,14 @@ def enrich_matter(self, matter_id: str):
             .all()
         )
 
+        # Build a compact items list for the LLM.
+        # For large record sets, summarize by source file instead of listing
+        # every record — avoids exceeding token limits.
         items_text = ""
-        for rec in records:
-            items_text += (
-                f"- record_id={rec.id} | source={rec.source} | type={rec.type} "
-                f"| ts={rec.ts} | text={rec.text[:500]}\n"
-            )
+        extraction_map: dict[str, Extraction] = {}
 
-        # Include artifact extractions
+        items_text += _summarize_records_for_llm(records)
+
         for art in artifacts:
             extraction = (
                 db.execute(
@@ -158,11 +323,17 @@ def enrich_matter(self, matter_id: str):
                 .first()
             )
             if extraction:
+                extraction_map[str(art.id)] = extraction
                 ext_summary = extraction.summary or extraction.overall_summary or ""
                 claims_str = json.dumps(extraction.structured_claims) if extraction.structured_claims else "{}"
                 items_text += (
-                    f"- artifact_id={art.id} | filename={art.original_filename} "
+                    f"- item_id={art.id} | item_type=artifact | filename={art.original_filename} "
                     f"| type={art.mime_type} | Extraction: {ext_summary} | Claims: {claims_str}\n"
+                )
+            else:
+                items_text += (
+                    f"- item_id={art.id} | item_type=artifact | filename={art.original_filename} "
+                    f"| type={art.mime_type} | status={art.status}\n"
                 )
 
         # --- LLM Call 1: Categorize + Timeline ---
@@ -178,19 +349,65 @@ def enrich_matter(self, matter_id: str):
                     ),
                 }
             ],
-            max_tokens=4096,
+            max_tokens=8192,
         )
         data1 = _parse_json_response(response1.content[0].text)
 
-        # Apply categorizations to records
-        cat_map = {c["record_id"]: c for c in data1.get("categorizations", [])}
-        for rec in records:
-            cat = cat_map.get(str(rec.id))
-            if cat:
-                rec.category = cat.get("category", "uncategorized")
-                rec.tags = cat.get("tags", [])
-                rec.relevance_score = cat.get("relevance_score", 0.0)
-                db.add(rec)
+        # Apply categorizations to both records and artifacts.
+        # Build lookup maps: artifact filename -> artifact, for propagating
+        # categories from artifacts to their child records.
+        rec_id_set = {str(r.id) for r in records}
+        art_id_set = {str(a.id) for a in artifacts}
+        art_map = {str(a.id): a for a in artifacts}
+        art_filename_map = {a.original_filename: a for a in artifacts}
+
+        for cat in data1.get("categorizations", []):
+            item_id = cat.get("item_id", cat.get("record_id", ""))
+            category = cat.get("category", "uncategorized")
+            tags = cat.get("tags", [])
+            score = cat.get("relevance_score", 0.0)
+            rationale = cat.get("relevance_rationale", "")
+
+            if item_id in rec_id_set:
+                rec = next((r for r in records if str(r.id) == item_id), None)
+                if rec:
+                    rec.category = category
+                    rec.tags = tags
+                    rec.relevance_score = score
+                    db.add(rec)
+            elif item_id in art_id_set:
+                art = art_map.get(item_id)
+                if art:
+                    art.category = category
+                    art.tags = tags
+                    art.relevance_score = score
+                    art.relevance_rationale = rationale
+                    db.add(art)
+
+                    # Propagate category and tags to child records.
+                    # Relevance scores are set individually by
+                    # _score_individual_records() below.
+                    for rec in records:
+                        source_file = ""
+                        if rec.metadata_ and isinstance(rec.metadata_, dict):
+                            source_file = rec.metadata_.get("source_file", "")
+                        if source_file == art.original_filename:
+                            rec.category = category
+                            rec.tags = tags
+                            db.add(rec)
+
+        # Per-record relevance scoring for multi-item artifacts.
+        # Gives each record its own score instead of inheriting the
+        # artifact-level score, enabling relevance-based pre-selection
+        # in the sharing UI.
+        _score_individual_records(
+            matter_title=matter.title,
+            artifacts=artifacts,
+            records=records,
+            client=client,
+            settings=settings,
+            db=db,
+        )
 
         # Persist timeline events
         for evt in data1.get("timeline_events", []):
@@ -206,16 +423,22 @@ def enrich_matter(self, matter_id: str):
                     "high_confidence" if evt.get("confidence", 0) >= 0.85 else "needs_review"
                 ),
                 citations=evt.get("citations", []),
-                related_record_ids=evt.get("related_record_ids", []),
+                related_record_ids=evt.get("related_item_ids", evt.get("related_record_ids", [])),
             )
             db.add(te)
         db.commit()
 
         # --- Build context for Call 2 ---
-        categorized_text = "\n".join(
+        categorized_lines = [
             f"- {rec.id}: [{rec.category}] tags={rec.tags} relevance={rec.relevance_score}"
             for rec in records
-        )
+        ]
+        for art in artifacts:
+            categorized_lines.append(
+                f"- {art.id}: [{art.category}] file={art.original_filename} "
+                f"relevance={art.relevance_score}"
+            )
+        categorized_text = "\n".join(categorized_lines)
         timeline_events = list(
             db.execute(
                 select(TimelineEvent)

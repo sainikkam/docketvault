@@ -158,14 +158,15 @@ async def get_dashboard(
     # Approved artifact IDs
     approved_ids = await get_approved_artifact_ids(db, matter_id)
 
-    # Category counts from records linked to approved artifacts
-    rec_result = await db.execute(
-        select(Record).where(Record.matter_id == matter_id)
+    # Category counts from approved artifacts (uses artifact-level category)
+    art_result = await db.execute(
+        select(Artifact).where(Artifact.matter_id == matter_id)
     )
     category_counts: dict[str, int] = {}
-    for rec in rec_result.scalars().all():
-        cat = rec.category if hasattr(rec, "category") else "uncategorized"
-        category_counts[cat] = category_counts.get(cat, 0) + 1
+    for art in art_result.scalars().all():
+        if art.id in approved_ids:
+            cat = art.category or "uncategorized"
+            category_counts[cat] = category_counts.get(cat, 0) + 1
 
     # Open missing items
     mi_result = await db.execute(
@@ -216,40 +217,34 @@ async def get_dashboard(
 async def get_evidence(
     matter_id: UUID,
     category: Optional[str] = None,
+    sort_by: str = Query("relevance", pattern="^(relevance|timestamp)$"),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     limit: int = Query(50, le=100),
     offset: int = Query(0, ge=0),
 ):
-    """Unified evidence list with visibility filtering and optional category filter."""
+    """Unified evidence list with visibility filtering, sorting, and optional category filter."""
     await require_matter_member(matter_id, user, db)
 
-    from app.evidence.models import Artifact, Record
+    from app.evidence.models import Artifact
     from app.sharing.service import apply_visibility_filter
 
+    order = (
+        Artifact.relevance_score.desc()
+        if sort_by == "relevance"
+        else Artifact.import_timestamp.desc()
+    )
     art_result = await db.execute(
-        select(Artifact).where(Artifact.matter_id == matter_id)
+        select(Artifact).where(Artifact.matter_id == matter_id).order_by(order)
     )
     artifacts = list(art_result.scalars().all())
 
-    # Apply visibility filter
+    # Apply visibility filter (lawyers see only approved; clients see their own)
     artifacts = await apply_visibility_filter(db, user.id, matter_id, artifacts)
 
-    # Optional category filter
+    # Filter by category if requested (uses artifact-level category now)
     if category:
-        rec_result = await db.execute(
-            select(Record).where(
-                Record.matter_id == matter_id, Record.category == category
-            )
-        )
-        category_artifact_ids = set()
-        for rec in rec_result.scalars().all():
-            if hasattr(rec, "raw_pointer"):
-                # Records don't have artifact_id directly; use matter_id match
-                pass
-        # For MVP, filter by matching artifact filenames or return all in category
-        # Since records don't have artifact_id, just return all visible artifacts
-        # This will be improved when Record gets an artifact_id foreign key
+        artifacts = [a for a in artifacts if a.category == category]
 
     total = len(artifacts)
     page = artifacts[offset : offset + limit]
@@ -262,11 +257,34 @@ async def get_evidence(
                 "filename": a.original_filename,
                 "mime_type": a.mime_type,
                 "status": a.status,
+                "category": a.category,
+                "relevance_score": a.relevance_score,
+                "relevance_rationale": a.relevance_rationale or "",
+                "tags": a.tags,
                 "uploaded_at": str(a.import_timestamp),
             }
             for a in page
         ],
     }
+
+
+@router.get("/matters/{matter_id}/evidence-preview")
+async def get_evidence_preview(
+    matter_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Client-facing organized evidence preview.
+
+    Returns artifacts grouped by relevance (relevant by category, sensitive,
+    and low relevance), each with extraction summaries and sensitivity flags.
+    """
+    await require_matter_role(
+        matter_id, ["primary_client", "contributor_client"], user, db
+    )
+    from app.evidence.service import build_evidence_preview
+
+    return await build_evidence_preview(matter_id, user.id, db)
 
 
 @router.post(
@@ -616,7 +634,7 @@ async def parse_letter(
 @router.patch("/requests/{request_id}")
 async def update_request_status(
     request_id: UUID,
-    status: str = Query(..., regex="^(fulfilled|dismissed)$"),
+    status: str = Query(..., pattern="^(fulfilled|dismissed)$"),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):

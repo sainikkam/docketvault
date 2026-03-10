@@ -39,6 +39,11 @@ class Artifact(BaseID, table=True):
     status: str = Field(default="uploading", max_length=50)
     is_duplicate: bool = Field(default=False)
     duplicate_of: Optional[UUID] = Field(default=None, foreign_key="artifacts.id")
+    # Relevance fields — populated by the enrichment pipeline after extraction
+    category: str = Field(default="uncategorized", max_length=50)
+    relevance_score: float = Field(default=0.0)
+    relevance_rationale: Optional[str] = Field(default=None, sa_column=Column(Text))
+    tags: list = Field(default=[], sa_column=Column(JSON))
 
 
 # --- Request/response schemas ---
@@ -58,6 +63,10 @@ class ArtifactResponse(SQLModel):
     import_timestamp: datetime
     is_duplicate: bool = False
     duplicate_of: Optional[UUID] = None
+    category: str = "uncategorized"
+    relevance_score: float = 0.0
+    relevance_rationale: Optional[str] = None
+    tags: list = []
 
 
 class RecordResponse(SQLModel):

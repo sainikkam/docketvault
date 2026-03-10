@@ -10,8 +10,17 @@ from app.auth.service import get_current_user
 from app.database import get_db
 from app.matters.service import log_action, require_matter_role
 from app.notifications.service import get_matter_attorneys, notify
-from app.sharing.models import BatchShareUpdateRequest, SharePolicy
-from app.sharing.service import batch_update_share_states, build_share_preview
+from app.sharing.models import (
+    BatchRecordShareUpdateRequest,
+    BatchShareUpdateRequest,
+    SharePolicy,
+)
+from app.sharing.service import (
+    auto_create_record_share_states,
+    batch_update_record_share_states,
+    batch_update_share_states,
+    build_share_preview,
+)
 
 router = APIRouter()
 
@@ -46,6 +55,27 @@ async def update_share_states(
     return {"results": results}
 
 
+@router.post("/matters/{matter_id}/share-preview/records/update")
+async def update_record_share_states(
+    matter_id: UUID,
+    body: BatchRecordShareUpdateRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Batch update per-record include/exclude states within a multi-item artifact."""
+    await require_matter_role(
+        matter_id, ["primary_client", "contributor_client"], user, db
+    )
+    results = await batch_update_record_share_states(
+        db,
+        matter_id,
+        user.id,
+        UUID(body.artifact_id),
+        [u.model_dump() for u in body.updates],
+    )
+    return {"results": results}
+
+
 @router.post("/matters/{matter_id}/share-preview/approve-all")
 async def approve_all(
     matter_id: UUID,
@@ -75,6 +105,16 @@ async def approve_all(
             policy.sensitivity_acknowledged = True
         db.add(policy)
         approved_count += 1
+
+        # Auto-create per-record share states for multi-item artifacts
+        from app.evidence.models import Artifact
+
+        art_result = await db.execute(
+            select(Artifact).where(Artifact.id == policy.artifact_id)
+        )
+        artifact = art_result.scalars().first()
+        if artifact:
+            await auto_create_record_share_states(db, policy, artifact)
 
     await db.commit()
     await log_action(

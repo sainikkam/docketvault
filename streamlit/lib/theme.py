@@ -168,7 +168,6 @@ def setup_sidebar():
         st.sidebar.page_link("streamlit_app.py", label="Home")
         st.sidebar.page_link("pages/02_client_upload.py", label="Upload Evidence")
         st.sidebar.page_link("pages/10_client_requests.py", label="Attorney Requests")
-        st.sidebar.page_link("pages/11_gmail_search.py", label="Gmail Search")
         st.sidebar.page_link("pages/03_client_review.py", label="Review & Timeline")
         st.sidebar.page_link("pages/04_client_share.py", label="Share & Approve")
         st.sidebar.page_link("pages/08_audit_log.py", label="Audit Log")

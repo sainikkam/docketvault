@@ -47,3 +47,25 @@ def api_get_bytes(path: str) -> bytes:
         r = c.post(path)  # export is POST
         r.raise_for_status()
         return r.content
+
+
+def is_google_connected() -> bool:
+    """Check if the current user has a Google account linked.
+
+    Calls the lightweight /oauth/google/status endpoint and caches
+    the result in session state for the current page render so
+    multiple UI sections (Drive tab, Gmail tab) share one check.
+    """
+    # Return cached value if we already checked this render cycle
+    cached = st.session_state.get("_google_connected")
+    if cached is not None:
+        return cached
+
+    try:
+        data = api_get("/oauth/google/status")
+        connected = data.get("connected", False)
+    except Exception:
+        connected = False
+
+    st.session_state["_google_connected"] = connected
+    return connected

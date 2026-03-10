@@ -4,6 +4,8 @@ Used by both the Manage Matters page (initial setup)
 and the Lawyer Dashboard (ongoing case management).
 """
 
+from datetime import datetime
+
 import streamlit as st
 from lib.api_client import api_get, api_post
 
@@ -74,6 +76,45 @@ def _generate_checklist(parsed: dict) -> list:
     return result.get("checklist", [])
 
 
+def _parse_iso_date(val):
+    """Convert an ISO date string to a datetime.date, or None."""
+    if not val:
+        return None
+    try:
+        return datetime.fromisoformat(str(val)).date()
+    except (ValueError, TypeError):
+        return None
+
+
+def _push_parsed_to_widgets(kp: str, parsed: dict):
+    """Write parsed field values directly into Streamlit widget keys.
+
+    Streamlit ignores the `value` parameter on widgets whose keys
+    already exist in session state. By setting the keys here before
+    st.rerun(), the widgets will display the parsed values.
+    """
+    st.session_state[f"{kp}new_req_title"] = parsed.get("title", "")
+
+    ds = _parse_iso_date(parsed.get("date_range_start"))
+    de = _parse_iso_date(parsed.get("date_range_end"))
+    if ds:
+        st.session_state[f"{kp}new_req_date_start"] = ds
+    if de:
+        st.session_state[f"{kp}new_req_date_end"] = de
+
+    kw_list = parsed.get("keywords", [])
+    st.session_state[f"{kp}new_req_keywords"] = ", ".join(kw_list) if kw_list else ""
+    st.session_state[f"{kp}new_req_source"] = parsed.get("source_system", "") or ""
+    st.session_state[f"{kp}new_req_desc"] = parsed.get("description", "") or ""
+    st.session_state[f"{kp}new_req_format"] = parsed.get("format_instructions", "") or ""
+    st.session_state[f"{kp}new_req_preservation"] = parsed.get("preservation_note", "") or ""
+
+    # Priority selectbox stores the value itself (not the index)
+    priority = parsed.get("priority", "medium")
+    if priority in ("low", "medium", "high"):
+        st.session_state[f"{kp}new_req_priority"] = priority
+
+
 def render_request_form(matter_id: str, key_prefix: str = ""):
     """Render the evidence request creation form.
 
@@ -93,7 +134,11 @@ def render_request_form(matter_id: str, key_prefix: str = ""):
             help="Upload an existing RFP letter and we'll extract all fields and generate a checklist.",
         )
 
-        if letter_file and st.button("Parse uploaded letter", key=f"{kp}parse_letter_btn"):
+        if letter_file and st.button(
+            "Parse Letter & Generate Checklist",
+            key=f"{kp}parse_letter_btn",
+            type="primary",
+        ):
             with st.spinner("Parsing letter and generating checklist..."):
                 try:
                     from lib.api_client import get_client
@@ -110,10 +155,20 @@ def render_request_form(matter_id: str, key_prefix: str = ""):
                     checklist = _generate_checklist(parsed)
                     st.session_state[f"{kp}draft_checklist"] = checklist
 
-                    st.success("Letter parsed and checklist generated!")
+                    # Push parsed values directly into widget keys so
+                    # Streamlit uses them on rerun (it ignores the `value`
+                    # param once a widget key already exists in session state).
+                    _push_parsed_to_widgets(kp, parsed)
+
+                    # Flag so the success message shows after rerun
+                    st.session_state[f"{kp}parse_success"] = True
                     st.rerun()
                 except Exception as e:
                     st.error(f"Failed to parse letter: {e}")
+
+        # Show success message that persists after rerun
+        if st.session_state.pop(f"{kp}parse_success", False):
+            st.success("Letter parsed and checklist generated! Review the fields below.")
 
         parsed = st.session_state.get(f"{kp}parsed_letter", {})
 
@@ -177,30 +232,34 @@ def render_request_form(matter_id: str, key_prefix: str = ""):
 
         # ── Checklist generation and review ──
         st.markdown("**Client checklist**")
-        st.caption(
-            "Generate an actionable checklist from the fields above. "
-            "Review and edit it before sending to the client."
-        )
 
-        if st.button("Generate Checklist", key=f"{kp}gen_checklist_btn"):
-            kw_list = [k.strip() for k in req_keywords.split(
-                ",") if k.strip()] if req_keywords else []
-            with st.spinner("Generating checklist..."):
-                try:
-                    result = api_post("/requests/generate-checklist", json={
-                        "title": req_title,
-                        "category": parsed.get("category"),
-                        "date_range_start": str(req_date_start) if req_date_start else None,
-                        "date_range_end": str(req_date_end) if req_date_end else None,
-                        "keywords": kw_list, "source_system": req_source,
-                        "description": req_desc, "format_instructions": req_format,
-                        "preservation_note": req_preservation,
-                    })
-                    st.session_state[f"{kp}draft_checklist"] = result.get(
-                        "checklist", [])
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Failed to generate checklist: {e}")
+        # Only show the manual "Generate Checklist" button when
+        # the user filled in the form by hand (no letter parsed).
+        # When a letter is parsed, the checklist is auto-generated.
+        if not parsed:
+            st.caption(
+                "Fill in the fields above, then generate an actionable "
+                "checklist to send to the client."
+            )
+            if st.button("Generate Checklist", key=f"{kp}gen_checklist_btn"):
+                kw_list = [k.strip() for k in req_keywords.split(
+                    ",") if k.strip()] if req_keywords else []
+                with st.spinner("Generating checklist..."):
+                    try:
+                        result = api_post("/requests/generate-checklist", json={
+                            "title": req_title,
+                            "category": parsed.get("category"),
+                            "date_range_start": str(req_date_start) if req_date_start else None,
+                            "date_range_end": str(req_date_end) if req_date_end else None,
+                            "keywords": kw_list, "source_system": req_source,
+                            "description": req_desc, "format_instructions": req_format,
+                            "preservation_note": req_preservation,
+                        })
+                        st.session_state[f"{kp}draft_checklist"] = result.get(
+                            "checklist", [])
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to generate checklist: {e}")
 
         # Show editable checklist if we have one
         draft_checklist = st.session_state.get(f"{kp}draft_checklist", [])

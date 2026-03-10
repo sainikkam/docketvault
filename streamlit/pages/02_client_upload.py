@@ -90,11 +90,23 @@ try:
                     for idx, item in enumerate(checklist):
                         item_text = item.get("item", "")
                         is_done = item.get("completed", False)
+                        is_auto = item.get("auto_detected", False)
+
+                        # Show auto-detected badge next to items the
+                        # system found evidence for automatically
+                        label = item_text
+                        if is_auto and is_done:
+                            label += "  *(auto-detected from your uploads)*"
+
                         checked = st.checkbox(
-                            item_text,
+                            label,
                             value=is_done,
                             key=f"cl_{req['id']}_{idx}",
                         )
+                        # Show the reason the system auto-checked this item
+                        if is_auto and is_done and item.get("auto_reason"):
+                            st.caption(f"  Evidence found: {item['auto_reason']}")
+
                         # Update the item if the client toggles it
                         if checked != is_done:
                             try:

@@ -26,7 +26,13 @@ from lib.theme import (
     logo_path, wordlogo_path, page_header, step_indicator,
 )
 from lib.api_client import api_post, api_get
+from lib.session import try_restore_session
+from lib.cookies import save_refresh_token
 import base64
+
+# Try to restore session from refresh-token cookie before anything else.
+# This is what keeps users logged in across browser refreshes.
+try_restore_session()
 
 
 # ── Join-matter form (used by client home + landing) ──────────
@@ -184,6 +190,8 @@ def _render_signin():
             try:
                 data = api_post("/auth/login", json={"email": email, "password": password})
                 st.session_state.access_token = data["access_token"]
+                # Persist refresh token in browser cookie for session survival
+                save_refresh_token(data["refresh_token"])
                 user = api_get("/users/me")
                 st.session_state.role = user["role"]
                 st.session_state.user_id = user["id"]
@@ -220,6 +228,8 @@ def _render_signin():
                     "display_name": reg_name,
                 })
                 st.session_state.access_token = data["access_token"]
+                # Persist refresh token in browser cookie for session survival
+                save_refresh_token(data["refresh_token"])
                 user = api_get("/users/me")
                 st.session_state.role = user["role"]
                 st.session_state.user_id = user["id"]

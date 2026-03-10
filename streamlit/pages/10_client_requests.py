@@ -268,11 +268,24 @@ st.markdown(
 
 checklist = request.get("checklist", [])
 if checklist:
-    with st.expander("Evidence checklist from your attorney", expanded=False):
+    done_count = sum(1 for c in checklist if c.get("completed"))
+    with st.expander(
+        f"Evidence checklist from your attorney ({done_count}/{len(checklist)} complete)",
+        expanded=False,
+    ):
         for i, item in enumerate(checklist):
             label = item.get("item", str(item))
             done = item.get("completed", False)
+            is_auto = item.get("auto_detected", False)
+
+            # Show auto-detected badge for items found automatically
+            if is_auto and done:
+                label += "  *(auto-detected)*"
+
             st.checkbox(label, value=done, disabled=True, key=f"ck_{i}")
+
+            if is_auto and done and item.get("auto_reason"):
+                st.caption(f"  Evidence found: {item['auto_reason']}")
 
 # ── Fetch records and match ───────────────────────────────────
 

@@ -20,37 +20,42 @@ import app.sharing.models  # noqa: F401 — registers share_policies table
 import app.notifications.models  # noqa: F401
 
 CATEGORIZE_TIMELINE_SYSTEM = (
-    "You are a legal intake assistant. "
+    "You are a legal intake assistant that works across all case types "
+    "(employment, personal injury, landlord-tenant, family law, etc.). "
     "Given a list of evidence items (records and artifacts with extraction summaries), do two things:\n"
     "1. Categorize EVERY item and assign a relevance score (0.0 = not relevant, 1.0 = critical)\n"
     "2. Build a chronological timeline of key events\n"
-    "Score relevance based on how useful the item is for the legal matter described. "
-    "Items that are clearly unrelated (personal photos, spam, generic docs) should get low scores. "
+    "Score relevance based on how useful the item is for the specific legal matter described. "
+    "Pay close attention to the matter title and case type — they define what counts as relevant. "
+    "Items that are clearly unrelated (spam, generic docs) should get low scores. "
     "Extract only what is supported by the evidence. Cite item IDs for every claim."
 )
 
 CATEGORIZE_TIMELINE_USER = """Matter: {matter_title}
+Case type: {case_type}
 
 Evidence items:
 {items_text}
 
 Return JSON with:
 - categorizations: list of {{"item_id": str, "item_type": "record"|"artifact", "category": str, "tags": [str], "relevance_score": float, "relevance_rationale": str}}
-  Categories: lease_documents, communications, financial_records, notices, photos_evidence, calendar_events, medical_records, personal_journal, ai_conversations, social_media, other
-  relevance_rationale: 1 sentence explaining why this item is or isn't relevant
+  Categories: legal_documents, communications, financial_records, official_notices, photos_evidence, calendar_events, medical_records, employment_records, personal_journal, ai_conversations, social_media, other
+  relevance_rationale: 1 sentence explaining why this item is or isn't relevant to this specific case type
 - timeline_events: list of {{"event_type": str, "title": str, "event_ts": str|null, "actors": [str], "summary": str, "confidence": float, "citations": [{{"item_id": str, "excerpt": str}}], "related_item_ids": [str]}}
-  Event types: lease_signed, notice_received, rent_paid, repair_requested, complaint_filed, eviction_notice, deposit_dispute, therapy_session, workplace_incident, other
+  Event types: agreement_signed, notice_received, payment_made, complaint_filed, legal_action, medical_event, therapy_session, workplace_event, communication_sent, relationship_event, milestone, other
 """
 
 MISSING_SUMMARY_SYSTEM = (
-    "You are a legal intake assistant for landlord-tenant disputes. "
+    "You are a legal intake assistant that works across all case types. "
     "Given categorized evidence and a checklist of required items, do two things:\n"
     "1. Identify what's missing from the checklist\n"
     "2. Draft a concise intake summary for the attorney\n"
-    "Be specific about what's missing and why it matters."
+    "Tailor your analysis to the specific case type described. "
+    "Be specific about what's missing and why it matters for this type of case."
 )
 
 MISSING_SUMMARY_USER = """Matter: {matter_title}
+Case type: {case_type}
 
 Categorized evidence:
 {categorized_text}
@@ -73,8 +78,11 @@ Return JSON with:
 
 REQUEST_MATCH_SYSTEM = (
     "You are a legal evidence matching engine. Given a list of attorney evidence "
-    "requests and a list of uploaded artifacts with their extraction summaries, "
-    "determine which artifacts satisfy which requests.\n"
+    "requests (with optional checklists) and a list of uploaded artifacts with "
+    "their extraction summaries, do two things:\n"
+    "1. Determine which artifacts satisfy which requests.\n"
+    "2. For requests that have checklists, determine which checklist items are "
+    "satisfied by the uploaded evidence.\n"
     "Match based on: category alignment, keyword presence in extracted text/claims, "
     "date range overlap, and source system match.\n"
     "Only report confident matches. Do not guess."
@@ -93,9 +101,15 @@ Return JSON with:
     "confidence": float (0..1),
     "reason": str (brief explanation of why these artifacts match)
   }}
+- checklist_updates: list of {{
+    "request_id": str,
+    "completed_indices": [int] (0-based indices of checklist items satisfied by uploaded evidence),
+    "reasons": [str] (brief explanation for each completed item, same order as indices)
+  }}
 
 Only include matches with confidence >= 0.7.
-If no artifacts match a request, omit that request from the list.
+If no artifacts match a request, omit that request from the matches list.
+Only mark a checklist item as completed if there is clear evidence for it.
 """
 
 
@@ -118,14 +132,14 @@ RECORD_SCORING_SYSTEM = (
 )
 
 RECORD_SCORING_USER = """Matter: {matter_title}
-
+{matter_context}
 Records from file "{source_file}":
 {records_text}
 
 Return JSON with:
-- scores: list of {{"record_id": str, "relevance_score": float, "relevance_rationale": str}}
+- scores: list of {{"index": int, "relevance_score": float, "relevance_rationale": str}}
 
-Score EVERY record listed above. Keep rationale to one short sentence.
+Score EVERY record listed above using its index number. Keep rationale to one short sentence.
 """
 
 
@@ -183,6 +197,48 @@ def _parse_json_response(raw_text: str) -> dict:
     return json.loads(raw_text)
 
 
+def _build_matter_context(matter_id: UUID, db: Session) -> str:
+    """Build a concise description of the matter for the scoring LLM.
+
+    Pulls from intake summary and evidence requests so the LLM
+    understands what the case is actually about (the matter title
+    alone is often uninformative, e.g. "Joe Vs Schmoe").
+    """
+    from app.enrichment.models import IntakeSummary
+
+    lines = []
+
+    summary = (
+        db.execute(
+            select(IntakeSummary).where(IntakeSummary.matter_id == matter_id)
+        )
+        .scalars()
+        .first()
+    )
+    if summary and summary.case_overview:
+        # Truncate to keep prompt size reasonable
+        lines.append(f"Case overview: {summary.case_overview[:500]}")
+
+    reqs = list(
+        db.execute(
+            select(EvidenceRequest).where(
+                EvidenceRequest.matter_id == matter_id
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for req in reqs[:3]:
+        parts = [f"Evidence request: {req.title}"]
+        if req.description:
+            parts.append(req.description[:200])
+        if req.keywords:
+            parts.append(f"Keywords: {', '.join(req.keywords[:20])}")
+        lines.append(" | ".join(parts))
+
+    return "\n".join(lines) if lines else ""
+
+
 def _score_individual_records(
     matter_title: str,
     artifacts: list,
@@ -199,6 +255,13 @@ def _score_individual_records(
     This enables per-record pre-selection in the sharing UI.
     """
     from collections import defaultdict
+
+    # Gather context about the matter so the LLM knows what the
+    # case is actually about (matter title alone is often vague)
+    matter_id_val = artifacts[0].matter_id if artifacts else None
+    matter_context = ""
+    if matter_id_val:
+        matter_context = _build_matter_context(matter_id_val, db)
 
     # Group records by their source artifact filename
     by_source: dict[str, list] = defaultdict(list)
@@ -222,12 +285,14 @@ def _score_individual_records(
         for batch_start in range(0, len(recs), MAX_RECORDS_PER_SCORING_BATCH):
             batch = recs[batch_start:batch_start + MAX_RECORDS_PER_SCORING_BATCH]
 
+            # Use simple integer indices instead of UUIDs. LLMs reliably
+            # return small numbers but frequently mangle 36-char UUIDs.
             records_text = ""
-            for rec in batch:
+            for i, rec in enumerate(batch):
                 preview = rec.text[:MAX_RECORD_PREVIEW_LEN].replace("\n", " ")
                 ts_str = rec.ts.isoformat() if rec.ts else "no date"
                 records_text += (
-                    f"- record_id={rec.id} | type={rec.type} | "
+                    f"- index={i} | type={rec.type} | "
                     f"date={ts_str} | text: {preview}\n"
                 )
 
@@ -239,6 +304,7 @@ def _score_individual_records(
                         "role": "user",
                         "content": RECORD_SCORING_USER.format(
                             matter_title=matter_title,
+                            matter_context=matter_context,
                             source_file=source_file,
                             records_text=records_text,
                         ),
@@ -247,19 +313,58 @@ def _score_individual_records(
                 )
                 data = _parse_json_response(response.content[0].text)
 
-                # Apply individual scores
-                rec_map = {str(r.id): r for r in batch}
+                # Map integer indices back to actual records
                 for score_entry in data.get("scores", []):
-                    rid = score_entry.get("record_id", "")
-                    rec = rec_map.get(rid)
-                    if rec:
-                        rec.relevance_score = score_entry.get("relevance_score", 0.0)
-                        db.add(rec)
+                    idx = score_entry.get("index")
+                    if idx is None or not isinstance(idx, int):
+                        continue
+                    if 0 <= idx < len(batch):
+                        batch[idx].relevance_score = score_entry.get(
+                            "relevance_score", 0.0
+                        )
+                        db.add(batch[idx])
 
             except Exception:
                 # Per-record scoring is best-effort; don't fail enrichment
                 pass
 
+        db.flush()
+
+
+def _propagate_artifact_scores_to_records(
+    artifacts: list, records: list, db: Session
+):
+    """Fallback: copy artifact relevance_score to child records still at 0.0.
+
+    Per-record scoring via LLM can silently fail (UUID mismatches, rate
+    limits, etc.). When that happens records are left at the default 0.0,
+    which causes everything to show as 0% on the share preview. This
+    fallback gives each unscored record its parent artifact's score so the
+    relevance-based pre-selection in the sharing UI works correctly.
+    """
+    # Build artifact filename -> score map
+    art_score_map: dict[str, float] = {}
+    for art in artifacts:
+        if art.relevance_score > 0:
+            art_score_map[art.original_filename] = art.relevance_score
+
+    if not art_score_map:
+        return
+
+    updated = 0
+    for rec in records:
+        if rec.relevance_score > 0:
+            continue  # already scored individually
+        source_file = ""
+        if rec.metadata_ and isinstance(rec.metadata_, dict):
+            source_file = rec.metadata_.get("source_file", "")
+        parent_score = art_score_map.get(source_file)
+        if parent_score:
+            rec.relevance_score = parent_score
+            db.add(rec)
+            updated += 1
+
+    if updated:
         db.flush()
 
 
@@ -291,6 +396,17 @@ def enrich_matter(self, matter_id: str):
         )
         if not matter:
             return
+
+        # Load matter template early so both LLM calls get the case type.
+        # Falls back to "General" if no template is linked.
+        template = (
+            db.execute(
+                select(MatterTemplate).where(MatterTemplate.id == matter.template_id)
+            )
+            .scalars()
+            .first()
+        ) if matter.template_id else None
+        case_type = template.name if template else "General"
 
         # Gather all records + their extractions
         records = list(
@@ -345,6 +461,7 @@ def enrich_matter(self, matter_id: str):
                     "role": "user",
                     "content": CATEGORIZE_TIMELINE_USER.format(
                         matter_title=matter.title,
+                        case_type=case_type,
                         items_text=items_text,
                     ),
                 }
@@ -409,6 +526,11 @@ def enrich_matter(self, matter_id: str):
             db=db,
         )
 
+        # Fallback: if per-record scoring left records at 0.0 (e.g. due
+        # to LLM errors or UUID mismatches), inherit the parent artifact's
+        # score so the share preview has reasonable defaults.
+        _propagate_artifact_scores_to_records(artifacts, records, db)
+
         # Persist timeline events
         for evt in data1.get("timeline_events", []):
             te = TimelineEvent(
@@ -452,14 +574,7 @@ def enrich_matter(self, matter_id: str):
             f"- {te.event_ts}: {te.title} ({te.event_type})" for te in timeline_events
         )
 
-        # Get checklist from matter template
-        template = (
-            db.execute(
-                select(MatterTemplate).where(MatterTemplate.id == matter.template_id)
-            )
-            .scalars()
-            .first()
-        )
+        # Get checklist from the template loaded earlier
         checklist_text = json.dumps(template.checklist, indent=2) if template else "[]"
 
         # --- LLM Call 2: Missing Items + Intake Summary ---
@@ -471,6 +586,7 @@ def enrich_matter(self, matter_id: str):
                     "role": "user",
                     "content": MISSING_SUMMARY_USER.format(
                         matter_title=matter.title,
+                        case_type=case_type,
                         categorized_text=categorized_text,
                         timeline_text=timeline_text,
                         checklist_text=checklist_text,
@@ -564,7 +680,7 @@ def _try_auto_match_requests(
         if not open_requests:
             return
 
-        # Build request descriptions for the LLM
+        # Build request descriptions for the LLM, including checklists
         requests_text = ""
         for req in open_requests:
             parts = [f"request_id={req.id}", f"title={req.title}"]
@@ -582,6 +698,15 @@ def _try_auto_match_requests(
                 parts.append(f"description={req.description[:200]}")
             requests_text += f"- {' | '.join(parts)}\n"
 
+            # Include checklist items so the LLM can determine which
+            # are satisfied by the uploaded evidence
+            if req.checklist:
+                for idx, item in enumerate(req.checklist):
+                    item_text = item.get("item", str(item))
+                    done = item.get("completed", False)
+                    status = "DONE" if done else "TODO"
+                    requests_text += f"    checklist[{idx}] ({status}): {item_text}\n"
+
         response = client.messages.create(
             model=settings.LLM_MODEL,
             system=REQUEST_MATCH_SYSTEM,
@@ -598,7 +723,7 @@ def _try_auto_match_requests(
         )
         match_data = _parse_json_response(response.content[0].text)
 
-        # Process matches
+        # Process artifact-to-request matches
         req_map = {str(r.id): r for r in open_requests}
         for match in match_data.get("matches", []):
             req_id = match.get("request_id")
@@ -627,6 +752,39 @@ def _try_auto_match_requests(
                     },
                 )
                 db.add(audit)
+
+        # Process checklist auto-completion. The LLM identifies which
+        # checklist items are satisfied by the uploaded evidence. We mark
+        # those items as completed and tag them as "auto_detected" so the
+        # UI can distinguish manual vs automatic check-offs.
+        for cl_update in match_data.get("checklist_updates", []):
+            req_id = cl_update.get("request_id")
+            if req_id not in req_map:
+                continue
+
+            req = req_map[req_id]
+            if not req.checklist:
+                continue
+
+            indices = cl_update.get("completed_indices", [])
+            reasons = cl_update.get("reasons", [])
+            checklist = list(req.checklist)  # copy to avoid mutation issues
+            changed = False
+
+            for i, idx in enumerate(indices):
+                if not isinstance(idx, int) or idx < 0 or idx >= len(checklist):
+                    continue
+                if checklist[idx].get("completed"):
+                    continue  # already checked, don't overwrite
+                checklist[idx]["completed"] = True
+                checklist[idx]["auto_detected"] = True
+                if i < len(reasons):
+                    checklist[idx]["auto_reason"] = reasons[i]
+                changed = True
+
+            if changed:
+                req.checklist = checklist
+                db.add(req)
 
         db.commit()
 

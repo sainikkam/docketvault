@@ -49,6 +49,8 @@ async def auto_create_record_share_states(
 
     Uses relevance-based pre-selection: records scored at or above the
     threshold default to "included", lower-scored records to "excluded".
+    Existing states are never overwritten — this avoids conflicts with
+    Streamlit widget session state and respects user manual overrides.
     Returns the created states (empty list if no child records exist).
     """
     records = await _get_records_for_artifact(db, artifact)

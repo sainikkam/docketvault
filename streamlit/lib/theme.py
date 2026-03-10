@@ -175,6 +175,7 @@ def setup_sidebar():
         st.sidebar.page_link("streamlit_app.py", label="Home")
         st.sidebar.page_link("pages/09_manage_matters.py", label="Manage Matters")
         st.sidebar.page_link("pages/05_lawyer_dashboard.py", label="Matter Dashboard")
+        st.sidebar.page_link("pages/13_intake_summary.py", label="Intake Summary")
         st.sidebar.page_link("pages/06_lawyer_evidence.py", label="Evidence Viewer")
         st.sidebar.page_link("pages/07_lawyer_export.py", label="Export Pack")
         st.sidebar.page_link("pages/08_audit_log.py", label="Audit Log")
@@ -189,8 +190,10 @@ def setup_sidebar():
 
     st.sidebar.divider()
 
-    # Logout
+    # Logout — clear session state AND the refresh-token cookie
     if st.sidebar.button("Logout", use_container_width=True):
+        from lib.cookies import clear_refresh_token
+        clear_refresh_token()
         for k in ["access_token", "role", "user_id", "matter_id", "user_email", "login_mode"]:
             st.session_state[k] = None
         st.rerun()
